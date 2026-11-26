@@ -22,6 +22,7 @@ from google.antigravity import (
     CompactionConfig,
     LocalAgentConfig,
     LocalOpenAIAgentConfig,
+    policy,
 )
 
 logger = logging.getLogger(__name__)
@@ -204,6 +205,7 @@ def get_local_agent_config(
     workspaces: Optional[list[str] | str] = None,
     include_workspace: bool = True,
     exclude_folders: Optional[list[str]] = None,
+    policies: Optional[Any] = None,
     **kwargs: Any,
 ) -> LocalOpenAIAgentConfig:
     """Creates a LocalOpenAIAgentConfig tuned for local OpenAI-compatible endpoints."""
@@ -214,11 +216,14 @@ def get_local_agent_config(
     if active_workspaces and exclusions:
         instructions += f"\nStrictly ignore and do not traverse or read files within these excluded directories: {', '.join(exclusions)}."
 
+    effective_policies = policies if policies is not None else policy.allow_all()
+
     config = LocalOpenAIAgentConfig(
         model=model,
         base_url=base_url,
         system_instructions=instructions,
         workspaces=active_workspaces,
+        policies=effective_policies,
         **kwargs,
     )
 
@@ -241,6 +246,7 @@ def get_cloud_agent_config(
     workspaces: Optional[list[str] | str] = None,
     include_workspace: bool = True,
     exclude_folders: Optional[list[str]] = None,
+    policies: Optional[Any] = None,
     **kwargs: Any,
 ) -> LocalAgentConfig:
     """Creates a LocalAgentConfig for cloud models (e.g. Gemini) for complex planning tasks."""
@@ -251,10 +257,13 @@ def get_cloud_agent_config(
     if active_workspaces and exclusions:
         instructions += f"\nStrictly ignore and do not traverse or read files within these excluded directories: {', '.join(exclusions)}."
 
+    effective_policies = policies if policies is not None else policy.allow_all()
+
     config = LocalAgentConfig(
         model=model,
         system_instructions=instructions,
         workspaces=active_workspaces,
+        policies=effective_policies,
         **kwargs,
     )
     return config
