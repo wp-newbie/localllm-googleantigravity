@@ -526,6 +526,14 @@ with tab_chat:
     # Display existing messages
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
+            if msg.get("images"):
+                for img_path in msg["images"]:
+                    if os.path.exists(img_path):
+                        st.image(img_path, caption=os.path.basename(img_path), use_container_width=True)
+            if msg.get("attachments"):
+                for att in msg["attachments"]:
+                    st.caption(f"📎 Attached file: `{att.get('name')}` ({att.get('size_kb', 0):.1f} KB)")
+
             if msg["role"] == "assistant" and msg.get("metadata", {}).get("worked_for"):
                 status_state = msg["metadata"].get("status_state", "Finished")
                 time_str = msg["metadata"]["worked_for"]
@@ -561,13 +569,78 @@ with tab_chat:
                 if st.button(sp["label"], key=f"dynamic_qp_{i}", use_container_width=True):
                     selected_quick_prompt = sp["prompt"]
 
+    # 📎 Attach Screenshots & Code/Data Files
+    with st.expander("📎 Attach Screenshots or Code/Data Files (or Paste with Ctrl+V)", expanded=False):
+        uploaded_files = st.file_uploader(
+            "Drop files, browse, or paste (Ctrl+V) screenshots directly into this dropzone:",
+            accept_multiple_files=True,
+            type=[
+                "png", "jpg", "jpeg", "webp",
+                "py", "ts", "tsx", "js", "jsx", "cjs", "mjs",
+                "json", "md", "txt", "log", "csv", "yaml", "yml", "sql", "html", "css"
+            ],
+            key="chat_file_uploader",
+            help="Screenshots (PNG/JPG) are displayed in chat. Code & text files will be read and analyzed by the AI.",
+        )
+        if uploaded_files:
+            st.caption(f"✅ {len(uploaded_files)} file(s) ready to send with your message.")
+
     user_input = st.chat_input("Enter your instruction, coding task, or architecture request...")
     pending_prompt = st.session_state.pop("pending_prompt", None)
     prompt = user_input or selected_quick_prompt or pending_prompt
 
     if prompt:
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        attached_images = []
+        attached_files_info = []
+        attached_context_snippets = []
+
+        if uploaded_files:
+            uploads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+            os.makedirs(uploads_dir, exist_ok=True)
+
+            for u_file in uploaded_files:
+                file_name = u_file.name
+                ext = os.path.splitext(file_name)[1].lower()
+                size_kb = len(u_file.getvalue()) / 1024
+
+                if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                    save_name = f"ss_{int(time.time())}_{file_name}"
+                    save_path = os.path.join(uploads_dir, save_name)
+                    with open(save_path, "wb") as f:
+                        f.write(u_file.getvalue())
+                    attached_images.append(save_path)
+                    attached_context_snippets.append(
+                        f"[Attached Screenshot / Image: `{file_name}` (saved locally at `{save_path}`)]"
+                    )
+                else:
+                    try:
+                        text_content = u_file.getvalue().decode("utf-8", errors="replace")
+                        attached_files_info.append({"name": file_name, "size_kb": size_kb})
+                        lang = get_language(file_name)
+                        attached_context_snippets.append(
+                            f"\n[Attached File: `{file_name}` ({size_kb:.1f} KB)]:\n```{lang}\n{text_content[:6000]}\n```"
+                        )
+                    except Exception as e:
+                        attached_context_snippets.append(f"[Could not read attached file `{file_name}`: {e}]")
+
+        # Combine user prompt with attached context if any
+        agent_exec_prompt = prompt
+        if attached_context_snippets:
+            agent_exec_prompt = f"{prompt}\n\n" + "\n".join(attached_context_snippets)
+
+        st.session_state.messages.append({
+            "role": "user",
+            "content": prompt,
+            "images": attached_images,
+            "attachments": attached_files_info,
+        })
         with st.chat_message("user"):
+            if attached_images:
+                for img_p in attached_images:
+                    st.image(img_p, caption=os.path.basename(img_p), use_container_width=True)
+            if attached_files_info:
+                for att in attached_files_info:
+                    st.caption(f"📎 Attached: `{att['name']}` ({att['size_kb']:.1f} KB)")
             st.markdown(prompt)
 
         force_mode = None
@@ -635,7 +708,7 @@ with tab_chat:
 
             is_finished = False
             try:
-                stream_gen = router.execute(prompt, force_mode=force_mode)
+                stream_gen = router.execute(agent_exec_prompt, force_mode=force_mode)
                 full_response = st.write_stream(sync_stream(stream_gen, on_first_token=on_first_token))
                 
                 stop_ticker.set()

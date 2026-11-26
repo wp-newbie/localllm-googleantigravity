@@ -50,3 +50,6 @@ workspace/
 # Brain persistent storage & checkpoints
 .brain/
 brain_data/
+
+# Uploaded screenshots and chat attachments
+uploads/
