@@ -289,16 +289,31 @@ if "messages" not in st.session_state:
         }
     ]
 
+def format_duration(seconds: float) -> str:
+    """Formats elapsed execution seconds into Antigravity IDE style (e.g. '1m', '1m 12s', '4.2s')."""
+    if seconds >= 60:
+        m, s = divmod(int(seconds), 60)
+        return f"{m}m" if s == 0 else f"{m}m {s}s"
+    return f"{seconds:.1f}s"
+
+
 # Display existing messages
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if "metadata" in msg and msg["metadata"]:
+        if msg["role"] == "assistant" and msg.get("metadata", {}).get("worked_for"):
+            with st.expander(f"Worked for {msg['metadata']['worked_for']}", expanded=False):
+                st.caption(f"🎯 **Model**: `{msg['metadata'].get('model', 'local')}` | 📋 **Mode**: `{msg['metadata'].get('target', 'LOCAL')}`")
+                st.caption(f"ℹ️ **Routing Reason**: {msg['metadata'].get('reason', '')}")
+                if msg["metadata"].get("workspace"):
+                    st.caption(f"📂 **Workspace**: `{msg['metadata']['workspace']}`")
+        elif msg["role"] == "assistant" and "metadata" in msg and msg["metadata"]:
             target = msg["metadata"].get("target", "").upper()
             reason = msg["metadata"].get("reason", "")
-            if target:
+            if target and target != "SYSTEM":
                 color = "green" if target == "LOCAL" else "blue"
                 st.caption(f":{color}[Routed to {target}]: {reason}")
+
+        st.markdown(msg["content"])
 
 def scan_workspace_prompts(workspaces: list[str] | None, max_prompts: int = 4) -> list[dict[str, str]]:
     """Inspects the active workspace structure to dynamically suggest context-aware quick prompts."""
@@ -458,33 +473,51 @@ if prompt:
         reason = decision.reason
 
     with st.chat_message("assistant"):
-        badge_color = "green" if target_name == "LOCAL" else "blue"
-        st.caption(f":{badge_color}[Routing Decision: {target_name}] — {reason}")
+        start_time = time.perf_counter()
+        active_model = local_model if target_name == "LOCAL" else cloud_model
 
-        try:
-            stream_gen = router.execute(prompt, force_mode=force_mode)
-            full_response = st.write_stream(sync_stream(stream_gen))
+        with st.status(f"Thinking with {active_model}...", expanded=True) as status_box:
+            status_box.write(f"🎯 **Routed To**: `{target_name}` ({active_model})")
+            status_box.write(f"📋 **Task Analysis**: {reason}")
+            if include_workspace and resolved_workspaces:
+                status_box.write(f"📂 **Attached Workspace**: `{', '.join(resolved_workspaces)}`")
+            if full_ide_permissions:
+                status_box.write("🛡️ **IDE Parity**: Autonomous Permissions Active (`policy.allow_all`)")
 
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": full_response,
-                    "metadata": {"target": target_name, "reason": reason},
-                }
-            )
-        except ConnectionError as ce:
-            error_msg = (
-                f"⚠️ **Could not connect to LM Studio server at `{base_url}`.**\n\n"
-                f"- **Quick Fix**: Open LM Studio, click the **Local Server (↔)** tab, and ensure the server toggle is **ON** (port 1234).\n"
-                f"- **Or**: Switch the routing mode in the sidebar to **⚡ Hybrid** or **☁️ Cloud Only**."
-            )
-            st.error(error_msg)
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": error_msg,
-                    "metadata": {"target": "ERROR", "reason": str(ce)},
-                }
-            )
-        except Exception as e:
-            st.error(f"Execution Error: {e}")
+            try:
+                stream_gen = router.execute(prompt, force_mode=force_mode)
+                full_response = st.write_stream(sync_stream(stream_gen))
+                duration_str = format_duration(time.perf_counter() - start_time)
+                status_box.update(label=f"Worked for {duration_str}", state="complete", expanded=False)
+
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": full_response,
+                        "metadata": {
+                            "target": target_name,
+                            "reason": reason,
+                            "worked_for": duration_str,
+                            "model": active_model,
+                            "workspace": ", ".join(resolved_workspaces) if (include_workspace and resolved_workspaces) else None,
+                        },
+                    }
+                )
+            except ConnectionError as ce:
+                status_box.update(label="Connection Error", state="error", expanded=True)
+                error_msg = (
+                    f"⚠️ **Could not connect to LM Studio server at `{base_url}`.**\n\n"
+                    f"- **Quick Fix**: Open LM Studio, click the **Local Server (↔)** tab, and ensure the server toggle is **ON** (port 1234).\n"
+                    f"- **Or**: Switch the routing mode in the sidebar to **⚡ Hybrid** or **☁️ Cloud Only**."
+                )
+                st.error(error_msg)
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": error_msg,
+                        "metadata": {"target": "ERROR", "reason": str(ce)},
+                    }
+                )
+            except Exception as e:
+                status_box.update(label="Execution Error", state="error", expanded=True)
+                st.error(f"Execution Error: {e}")
