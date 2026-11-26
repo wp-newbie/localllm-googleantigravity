@@ -46,3 +46,7 @@ personal/
 Personal/
 workspaces/
 workspace/
+
+# Brain persistent storage & checkpoints
+.brain/
+brain_data/

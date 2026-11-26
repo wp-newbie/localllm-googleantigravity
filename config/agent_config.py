@@ -230,6 +230,15 @@ def get_local_agent_config(
 
     effective_policies = policies if policies is not None else policy.allow_all()
 
+    try:
+        from brain.brain_manager import BrainManager
+        bm = BrainManager()
+        mem_str = bm.format_core_memories_prompt()
+        if mem_str:
+            instructions += f"\n{mem_str}"
+    except Exception:
+        pass
+
     capabilities = kwargs.pop("capabilities", None)
     if capabilities is None and full_ide_permissions:
         capabilities = CapabilitiesConfig(
@@ -282,6 +291,15 @@ def get_cloud_agent_config(
         instructions += f"\nStrictly ignore and do not traverse or read files within these excluded directories: {', '.join(exclusions)}."
 
     effective_policies = policies if policies is not None else policy.allow_all()
+
+    try:
+        from brain.brain_manager import BrainManager
+        bm = BrainManager()
+        mem_str = bm.format_core_memories_prompt()
+        if mem_str:
+            instructions += f"\n{mem_str}"
+    except Exception:
+        pass
 
     capabilities = kwargs.pop("capabilities", None)
     if capabilities is None and full_ide_permissions:

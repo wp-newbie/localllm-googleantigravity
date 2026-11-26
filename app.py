@@ -27,11 +27,17 @@ from streamlit.runtime.scriptrunner import add_script_run_ctx
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import importlib
+import brain.brain_manager
 import config.agent_config
 import router.hybrid_router
 
+importlib.reload(brain.brain_manager)
 importlib.reload(config.agent_config)
 importlib.reload(router.hybrid_router)
+
+from brain.brain_manager import BrainManager
+
+brain_manager = BrainManager()
 
 from config.agent_config import (
     DEFAULT_CLOUD_MODEL,
@@ -512,7 +518,9 @@ def scan_workspace_prompts(workspaces: list[str] | None, max_prompts: int = 4) -
     return result
 
 
-tab_chat, tab_explorer = st.tabs(["💬 Chat & Assistant", "📁 Workspace Code Explorer"])
+tab_chat, tab_explorer, tab_brain = st.tabs(
+    ["💬 Chat & Assistant", "📁 Workspace Code Explorer", "🧠 Brain & Backtrack"]
+)
 
 with tab_chat:
     # Display existing messages
@@ -643,6 +651,15 @@ with tab_chat:
                         },
                     }
                 )
+
+                try:
+                    brain_manager.create_checkpoint(
+                        label=f"Turn: {prompt[:32]}",
+                        messages=st.session_state.messages,
+                        auto=True,
+                    )
+                except Exception:
+                    pass
             except ConnectionError as ce:
                 stop_ticker.set()
                 ticker_thread.join(timeout=0.2)
@@ -754,3 +771,106 @@ with tab_explorer:
                     st.error(f"Could not read file `{selected_rel_path}`: {read_err}")
             else:
                 st.info("Select a file from the project tree to view its contents and trigger AI actions.")
+
+
+with tab_brain:
+    st.subheader("🧠 Antigravity Brain: Core Memories & Backtracking")
+    st.caption(
+        "Persistent long-term memory across sessions and conversational checkpoints for instant backtracking."
+    )
+
+    b_col1, b_col2 = st.columns(2)
+
+    with b_col1:
+        st.markdown("### 📌 Persistent Core Memories")
+        st.info(
+            "Core memories are permanently stored in your local `.brain/` directory and automatically injected into the local LLM's system instructions."
+        )
+
+        with st.expander("➕ Add New Core Memory", expanded=False):
+            with st.form("add_memory_form", clear_on_submit=True):
+                mem_content = st.text_area(
+                    "Memory Fact / Architectural Decision",
+                    placeholder="e.g. Always generate typed functions with JSDoc comments.",
+                )
+                mem_cat = st.selectbox(
+                    "Category",
+                    ["project", "infrastructure", "preference", "policy", "architecture", "general"],
+                )
+                submitted = st.form_submit_button("💾 Save to Core Memory")
+                if submitted and mem_content.strip():
+                    brain_manager.add_memory(mem_content.strip(), category=mem_cat)
+                    st.success("Memory saved to Brain!")
+                    st.rerun()
+
+        active_mems = brain_manager.get_memories()
+        st.caption(f"{len(active_mems)} core memory item(s) stored in Brain:")
+
+        for mem in active_mems:
+            cat_tag = mem.get("category", "general").upper()
+            m_id = mem.get("id")
+            card_col, del_col = st.columns([5, 1])
+            with card_col:
+                st.markdown(f"**`[{cat_tag}]`** {mem.get('content')}")
+                st.caption(f"📅 Saved: {mem.get('created_at', '')} | ID: `{m_id}`")
+            with del_col:
+                if st.button("🗑️", key=f"del_mem_{m_id}", help="Delete this memory"):
+                    brain_manager.delete_memory(m_id)
+                    st.rerun()
+            st.divider()
+
+    with b_col2:
+        st.markdown("### ⏱️ Conversation Checkpoints & Backtracking")
+        st.info(
+            "Backtrack to any past checkpoint if the agent made an error, went down the wrong path, or if you want to branch off."
+        )
+
+        with st.expander("📸 Snapshot Current State as Checkpoint", expanded=False):
+            with st.form("manual_chk_form", clear_on_submit=True):
+                chk_label = st.text_input(
+                    "Checkpoint Label",
+                    placeholder="e.g. Before refactoring electron/main.cjs",
+                )
+                save_chk = st.form_submit_button("📸 Create Checkpoint")
+                if save_chk:
+                    brain_manager.create_checkpoint(
+                        label=chk_label.strip() or "Manual Snapshot",
+                        messages=st.session_state.messages,
+                        auto=False,
+                    )
+                    st.success("Checkpoint saved!")
+                    st.rerun()
+
+        checkpoints = brain_manager.get_checkpoints()
+        st.caption(f"{len(checkpoints)} checkpoint(s) available for backtracking:")
+
+        for chk in checkpoints:
+            chk_id = chk.get("id")
+            is_auto = chk.get("auto", False)
+            auto_badge = "🔄 Auto" if is_auto else "📌 Manual"
+
+            with st.container():
+                c_header, c_btn = st.columns([3, 2])
+                with c_header:
+                    st.markdown(f"**{chk.get('label')}** `{auto_badge}`")
+                    st.caption(f"📅 {chk.get('created_at')} | 💬 {chk.get('message_count', 0)} messages")
+                    st.caption(f"Preview: *{chk.get('preview', '')}*")
+                with c_btn:
+                    b_restore, b_del = st.columns([2, 1])
+                    with b_restore:
+                        if st.button(
+                            "⏮️ Backtrack",
+                            key=f"bt_{chk_id}",
+                            help="Restore chat to this exact state",
+                            use_container_width=True,
+                        ):
+                            restored = brain_manager.restore_checkpoint(chk_id)
+                            if restored is not None:
+                                st.session_state.messages = restored
+                                st.toast(f"Backtracked to: {chk.get('label')}", icon="⏮️")
+                                st.rerun()
+                    with b_del:
+                        if st.button("🗑️", key=f"del_chk_{chk_id}", help="Delete checkpoint"):
+                            brain_manager.delete_checkpoint(chk_id)
+                            st.rerun()
+                st.divider()
