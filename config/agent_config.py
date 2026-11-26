@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import subprocess
 from typing import Any, Optional
 import requests
 from google.antigravity import (
@@ -26,6 +27,7 @@ from google.antigravity import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_LOCAL_BASE_URL = DEFAULT_LM_STUDIO_BASE_URL
 DEFAULT_LOCAL_MODEL = "qwen2.5-7b-instruct-1m"
 DEFAULT_CLOUD_MODEL = "gemini-2.5-flash"
@@ -53,11 +55,11 @@ DEFAULT_CLOUD_SYSTEM_INSTRUCTIONS = (
 
 
 def get_lm_studio_models(base_url: str = DEFAULT_LM_STUDIO_BASE_URL) -> list[str]:
-    """Queries LM Studio for loaded models and scans local disk for downloaded GGUFs."""
+    """Queries LM Studio for registered model keys (e.g. qwen2.5-7b-instruct-1m, gemma-4-e4b-it)."""
     models: list[str] = []
     seen: set[str] = set()
 
-    # 1. Query running LM Studio OpenAI endpoint (/v1/models)
+    # 1. Query running LM Studio OpenAI endpoint (/v1/models) - this is the ground truth
     models_url = f"{base_url.rstrip('/')}/models"
     try:
         resp = requests.get(models_url, timeout=1.5)
@@ -72,17 +74,27 @@ def get_lm_studio_models(base_url: str = DEFAULT_LM_STUDIO_BASE_URL) -> list[str
     except Exception:
         pass
 
-    # 2. Scan LM Studio disk directory (~/.lmstudio/models)
-    lm_dir = os.path.expanduser("~/.lmstudio/models")
-    if os.path.isdir(lm_dir):
+    if models:
+        return models
+
+    # 2. Try lms ls CLI if server wasn't reachable
+    lms_exe = os.path.expanduser(r"~/.lmstudio/bin/lms.exe")
+    if os.path.exists(lms_exe):
         try:
-            for root, _, files in os.walk(lm_dir):
-                for f in files:
-                    if f.endswith(".gguf") and "embed" not in f.lower():
-                        name = f.replace(".gguf", "")
-                        if name.lower() not in seen:
-                            seen.add(name.lower())
-                            models.append(name)
+            out = subprocess.check_output([lms_exe, "ls"], text=True, timeout=2)
+            for line in out.splitlines():
+                parts = line.split()
+                if (
+                    parts
+                    and not line.startswith("LLM")
+                    and not line.startswith("EMBEDDING")
+                    and not line.startswith("CLI")
+                    and not line.startswith("You have")
+                ):
+                    m_id = parts[0]
+                    if m_id and "embed" not in m_id.lower() and m_id.lower() not in seen:
+                        seen.add(m_id.lower())
+                        models.append(m_id)
         except Exception:
             pass
 

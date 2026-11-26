@@ -44,6 +44,16 @@ class RouteDecision:
     reason: str
 
 
+def normalize_model_name(model_name: str) -> str:
+    """Normalizes model names to valid LM Studio registered identifiers."""
+    m_lower = model_name.lower().strip()
+    if "gemma" in m_lower:
+        return "gemma-4-e4b-it"
+    if "qwen" in m_lower:
+        return "qwen2.5-7b-instruct-1m"
+    return model_name
+
+
 class HybridAgentRouter:
     """Intelligent router managing local inference and cloud escalation."""
 
@@ -71,7 +81,7 @@ class HybridAgentRouter:
         enable_lightweight: bool = True,
         auto_fallback: bool = True,
     ):
-        self.local_model = local_model
+        self.local_model = normalize_model_name(local_model)
         self.local_base_url = local_base_url.rstrip("/")
         self.cloud_model = cloud_model
         self.include_workspace = include_workspace
