@@ -16,10 +16,12 @@ import asyncio
 import json
 import os
 import sys
+import threading
 import time
 from typing import AsyncGenerator, Iterator
 
 import streamlit as st
+from streamlit.runtime.scriptrunner import add_script_run_ctx
 
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -53,13 +55,22 @@ st.set_page_config(
 )
 
 
-def sync_stream(async_gen: AsyncGenerator[str, None]) -> Iterator[str]:
+def sync_stream(
+    async_gen: AsyncGenerator[str, None],
+    on_first_token: Any = None,
+) -> Iterator[str]:
     """Wraps an async generator for Streamlit's synchronous st.write_stream."""
     loop = asyncio.new_event_loop()
+    first_received = False
     try:
         while True:
             try:
-                yield loop.run_until_complete(async_gen.__anext__())
+                chunk = loop.run_until_complete(async_gen.__anext__())
+                if not first_received:
+                    first_received = True
+                    if on_first_token:
+                        on_first_token()
+                yield chunk
             except StopAsyncIteration:
                 break
     finally:
@@ -290,11 +301,12 @@ if "messages" not in st.session_state:
     ]
 
 def format_duration(seconds: float) -> str:
-    """Formats elapsed execution seconds into Antigravity IDE style (e.g. '1m', '1m 12s', '4.2s')."""
-    if seconds >= 60:
-        m, s = divmod(int(seconds), 60)
+    """Formats elapsed execution seconds into Antigravity IDE style (e.g. '3s', '1m', '1m 5s')."""
+    total_secs = int(round(seconds))
+    if total_secs >= 60:
+        m, s = divmod(total_secs, 60)
         return f"{m}m" if s == 0 else f"{m}m {s}s"
-    return f"{seconds:.1f}s"
+    return f"{max(1, total_secs)}s"
 
 
 def get_file_icon(filename: str) -> str:
@@ -578,17 +590,43 @@ with tab_chat:
             active_model = local_model if target_name == "LOCAL" else cloud_model
 
             status_placeholder = st.empty()
-            with status_placeholder.status(f"Thinking with {active_model}...", expanded=True) as status_box:
+            with status_placeholder.status("Thinking for 1s", expanded=True) as status_box:
                 status_box.write(f"🎯 **Routed To**: `{target_name}` ({active_model})")
-                status_box.write(f"📋 **Task Analysis**: {reason}")
+                status_box.write(f"📋 **Task**: {reason}")
                 if include_workspace and resolved_workspaces:
                     status_box.write(f"📂 **Attached Workspace**: `{', '.join(resolved_workspaces)}`")
                 if full_ide_permissions:
                     status_box.write("🛡️ **IDE Parity**: Autonomous Permissions Active (`policy.allow_all`)")
+                status_box.write("⚡ Initializing model inference & inspecting workspace...")
+
+            stop_ticker = threading.Event()
+
+            def live_ticker():
+                while not stop_ticker.wait(1.0):
+                    elapsed = time.perf_counter() - start_time
+                    dur = format_duration(elapsed)
+                    try:
+                        status_box.update(label=f"Thinking for {dur}")
+                    except Exception:
+                        break
+
+            ticker_thread = threading.Thread(target=live_ticker, daemon=True)
+            add_script_run_ctx(ticker_thread)
+            ticker_thread.start()
+
+            def on_first_token():
+                try:
+                    status_box.write("💬 **Generating response**...")
+                except Exception:
+                    pass
 
             try:
                 stream_gen = router.execute(prompt, force_mode=force_mode)
-                full_response = st.write_stream(sync_stream(stream_gen))
+                full_response = st.write_stream(sync_stream(stream_gen, on_first_token=on_first_token))
+                
+                stop_ticker.set()
+                ticker_thread.join(timeout=0.2)
+                
                 duration_str = format_duration(time.perf_counter() - start_time)
                 status_box.update(label=f"Worked for {duration_str}", state="complete", expanded=False)
 
@@ -606,6 +644,8 @@ with tab_chat:
                     }
                 )
             except ConnectionError as ce:
+                stop_ticker.set()
+                ticker_thread.join(timeout=0.2)
                 status_box.update(label="Connection Error", state="error", expanded=True)
                 error_msg = (
                     f"⚠️ **Could not connect to LM Studio server at `{base_url}`.**\n\n"
@@ -621,6 +661,8 @@ with tab_chat:
                     }
                 )
             except Exception as e:
+                stop_ticker.set()
+                ticker_thread.join(timeout=0.2)
                 status_box.update(label="Execution Error", state="error", expanded=True)
                 st.error(f"Execution Error: {e}")
 
