@@ -1,12 +1,13 @@
 [project]
-name = "antigravity-local-llm"
-version = "0.1.0"
-description = "Antigravity SDK local LLM integration with Ollama and hybrid cloud routing"
+name = "localllm-googleantigravity"
+version = "0.2.0"
+description = "Antigravity SDK local LLM integration with Ollama, hybrid cloud routing, and interactive Streamlit Web GUI"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "google-antigravity>=0.1.24",
     "requests>=2.31.0",
+    "streamlit>=1.35.0",
 ]
 
 [project.scripts]
