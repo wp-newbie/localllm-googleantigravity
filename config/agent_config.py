@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from typing import Any, Optional
+import requests
 from google.antigravity import (
     Agent,
     AgentBehavior,
@@ -24,8 +25,11 @@ from google.antigravity import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
+DEFAULT_LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
+
+DEFAULT_LOCAL_BASE_URL = DEFAULT_OLLAMA_BASE_URL
 DEFAULT_LOCAL_MODEL = "qwen2.5-coder:7b"
-DEFAULT_LOCAL_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_CLOUD_MODEL = "gemini-2.5-flash"
 
 DEFAULT_EXCLUDED_FOLDERS = [
@@ -50,17 +54,107 @@ DEFAULT_CLOUD_SYSTEM_INSTRUCTIONS = (
 )
 
 
+def get_lm_studio_models(base_url: str = DEFAULT_LM_STUDIO_BASE_URL) -> list[str]:
+    """Queries LM Studio for loaded models and scans local disk for downloaded GGUFs."""
+    models: list[str] = []
+    seen: set[str] = set()
+
+    # 1. Query running LM Studio OpenAI endpoint (/v1/models)
+    models_url = f"{base_url.rstrip('/')}/models"
+    try:
+        resp = requests.get(models_url, timeout=1.5)
+        if resp.status_code == 200:
+            data = resp.json().get("data", [])
+            for item in data:
+                mid = item.get("id")
+                # Filter out embedding-only models from primary LLM selection
+                if mid and "embed" not in mid.lower():
+                    if mid.lower() not in seen:
+                        seen.add(mid.lower())
+                        models.append(mid)
+    except Exception:
+        pass
+
+    # 2. Scan LM Studio disk directory (~/.lmstudio/models)
+    lm_dir = os.path.expanduser("~/.lmstudio/models")
+    if os.path.isdir(lm_dir):
+        try:
+            for root, _, files in os.walk(lm_dir):
+                for f in files:
+                    if f.endswith(".gguf") and "embed" not in f.lower():
+                        name = f.replace(".gguf", "")
+                        if name.lower() not in seen:
+                            seen.add(name.lower())
+                            models.append(name)
+        except Exception:
+            pass
+
+    return models if models else ["qwen2.5-7b-instruct-1m"]
+
+
+def get_ollama_models(base_url: str = DEFAULT_OLLAMA_BASE_URL) -> list[str]:
+    """Queries Ollama for locally downloaded and tagged models."""
+    models: list[str] = []
+    seen: set[str] = set()
+
+    # Try /v1/models then /api/tags
+    v1_url = f"{base_url.rstrip('/')}/models"
+    native_url = f"{base_url.replace('/v1', '').rstrip('/')}/api/tags"
+
+    for url in [v1_url, native_url]:
+        try:
+            resp = requests.get(url, timeout=1.5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if "data" in data and isinstance(data["data"], list):
+                    for item in data["data"]:
+                        mid = item.get("id")
+                        if mid and mid.lower() not in seen:
+                            seen.add(mid.lower())
+                            models.append(mid)
+                elif "models" in data and isinstance(data["models"], list):
+                    for item in data["models"]:
+                        mid = item.get("name")
+                        if mid and mid.lower() not in seen:
+                            seen.add(mid.lower())
+                            models.append(mid)
+            if models:
+                break
+        except Exception:
+            continue
+
+    return models if models else ["qwen2.5-coder:7b", "gemma4:latest", "qwen2.5-coder:0.5b"]
+
+
+def get_available_local_models(provider: str = "auto", base_url: Optional[str] = None) -> list[str]:
+    """Discovers available models based on provider (lmstudio, ollama, or auto)."""
+    prov = provider.lower()
+    if "lm" in prov:
+        return get_lm_studio_models(base_url or DEFAULT_LM_STUDIO_BASE_URL)
+    elif "ollama" in prov:
+        return get_ollama_models(base_url or DEFAULT_OLLAMA_BASE_URL)
+
+    # Auto: Check base_url or query both
+    if base_url:
+        if "1234" in base_url:
+            return get_lm_studio_models(base_url)
+        elif "11434" in base_url:
+            return get_ollama_models(base_url)
+
+    # Return union of both
+    lm = get_lm_studio_models()
+    ol = get_ollama_models()
+    combined: list[str] = []
+    seen: set[str] = set()
+    for m in lm + ol:
+        if m.lower() not in seen:
+            seen.add(m.lower())
+            combined.append(m)
+    return combined
+
+
 def get_configured_workspaces(project_dir: Optional[str] = None) -> list[str]:
-    """Discovers all workspace directories defined via ANTIGRAVITY_WORKSPACE(S).
-
-    Parses:
-    - Environment variables: ANTIGRAVITY_WORKSPACE, ANTIGRAVITY_WORKSPACES
-    - Configuration files: .env, .env.local, .env.example (multiple lines & comma/semicolon-separated)
-    - Local candidates (e.g. F:\\Personal, F:\\Code)
-
-    Returns:
-        List of distinct workspace paths.
-    """
+    """Discovers all workspace directories defined via ANTIGRAVITY_WORKSPACE(S)."""
     discovered: list[str] = []
     seen: set[str] = set()
 
@@ -113,7 +207,6 @@ def get_configured_workspaces(project_dir: Optional[str] = None) -> list[str]:
     return discovered
 
 
-# Automatically resolve default project workspace folder
 _ALL_DISCOVERED = get_configured_workspaces()
 DEFAULT_PROJECT_WORKSPACE = _ALL_DISCOVERED[0] if _ALL_DISCOVERED else None
 
@@ -122,15 +215,7 @@ def resolve_workspaces(
     workspaces: Optional[list[str] | str] = None,
     enabled: bool = True,
 ) -> Optional[list[str]]:
-    """Resolves target project workspace directories for the agent.
-
-    Args:
-        workspaces: Directory path(s), empty string/list, or None.
-        enabled: If False, workspace is explicitly excluded (returns None).
-
-    Returns:
-        List of absolute valid directory paths, or None if excluded/empty.
-    """
+    """Resolves target project workspace directories for the agent."""
     if not enabled:
         return None
 
@@ -152,7 +237,6 @@ def resolve_workspaces(
                     valid_dirs.append(norm)
         return valid_dirs if valid_dirs else None
 
-    # Only fall back to DEFAULT_PROJECT_WORKSPACE when workspaces is strictly None (unspecified)
     if workspaces is None and DEFAULT_PROJECT_WORKSPACE and os.path.isdir(DEFAULT_PROJECT_WORKSPACE):
         return [os.path.abspath(DEFAULT_PROJECT_WORKSPACE)]
 

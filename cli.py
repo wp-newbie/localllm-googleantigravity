@@ -1,7 +1,7 @@
 """CLI test and demonstration script for Antigravity Local LLM integration.
 
 Validates local endpoint health, executes queries through LocalOpenAIAgentConfig,
-and demonstrates hybrid routing and fallback capabilities with workspace folder include/exclude support.
+and demonstrates hybrid routing and fallback capabilities with LM Studio & Ollama model support.
 """
 
 from __future__ import annotations
@@ -15,9 +15,12 @@ import time
 from config.agent_config import (
     DEFAULT_CLOUD_MODEL,
     DEFAULT_EXCLUDED_FOLDERS,
+    DEFAULT_LM_STUDIO_BASE_URL,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_MODEL,
+    DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_PROJECT_WORKSPACE,
+    get_available_local_models,
     get_cloud_agent_config,
     get_local_agent_config,
     resolve_workspaces,
@@ -30,7 +33,7 @@ def print_banner():
 ==============================================================
    Antigravity SDK Local LLM & Hybrid Router Runner
    - Local: LocalOpenAIAgentConfig (.lightweight())
-   - Endpoint: Ollama (OpenAI-compatible /v1 API)
+   - Endpoints: LM Studio (:1234) & Ollama (:11434)
    - Fallback: Cloud Escalation Architecture
 ==============================================================
 """
@@ -38,7 +41,7 @@ def print_banner():
 
 
 def check_endpoint(base_url: str) -> bool:
-    """Verifies that the target local Ollama / OpenAI-compatible endpoint responds cleanly."""
+    """Verifies that the target local Ollama / LM Studio endpoint responds cleanly."""
     router = HybridAgentRouter(local_base_url=base_url)
     print(f"[*] Probing local endpoint: {base_url} ...")
     start = time.perf_counter()
@@ -52,7 +55,7 @@ def check_endpoint(base_url: str) -> bool:
     else:
         print(f"[-] WARNING: Endpoint check failed ({elapsed:.1f}ms).")
         print(f"    Details: {message}")
-        print("    Tip: Ensure Ollama is running (`ollama serve`) and listening at this address.")
+        print("    Tip: Ensure your server (LM Studio or Ollama) is running and listening at this address.")
         return False
 
 
@@ -110,7 +113,18 @@ def main():
     parser.add_argument(
         "--test-endpoint",
         action="store_true",
-        help="Quickly verify if the local Ollama server at http://localhost:11434 responds cleanly.",
+        help="Quickly verify if the local server responds cleanly.",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=["lmstudio", "ollama"],
+        default="lmstudio",
+        help="Local LLM provider: 'lmstudio' (default: :1234) or 'ollama' (default: :11434).",
+    )
+    parser.add_argument(
+        "--list-models",
+        action="store_true",
+        help="List all models discovered from LM Studio or Ollama.",
     )
     parser.add_argument(
         "--prompt",
@@ -127,14 +141,14 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default=DEFAULT_LOCAL_MODEL,
-        help=f"Target local model name in Ollama (default: {DEFAULT_LOCAL_MODEL}).",
+        default=None,
+        help="Target local model name (defaults to active provider model e.g. qwen2.5-7b-instruct-1m).",
     )
     parser.add_argument(
         "--base-url",
         type=str,
-        default=DEFAULT_LOCAL_BASE_URL,
-        help=f"Local server base URL (default: {DEFAULT_LOCAL_BASE_URL}).",
+        default=None,
+        help="Custom local server base URL.",
     )
     parser.add_argument(
         "--cloud-model",
@@ -174,8 +188,24 @@ def main():
     args = parser.parse_args()
     print_banner()
 
+    # Determine default base_url & model based on provider
+    if args.provider == "lmstudio":
+        base_url = args.base_url or DEFAULT_LM_STUDIO_BASE_URL
+        discovered = get_available_local_models("lmstudio", base_url)
+        model = args.model or (discovered[0] if discovered else "qwen2.5-7b-instruct-1m")
+    else:
+        base_url = args.base_url or DEFAULT_OLLAMA_BASE_URL
+        discovered = get_available_local_models("ollama", base_url)
+        model = args.model or (discovered[0] if discovered else DEFAULT_LOCAL_MODEL)
+
+    if args.list_models:
+        print(f"[*] Discovered models for provider '{args.provider}' ({base_url}):")
+        for m in discovered:
+            print(f"    - {m}")
+        sys.exit(0)
+
     if args.test_endpoint:
-        success = check_endpoint(args.base_url)
+        success = check_endpoint(base_url)
         sys.exit(0 if success else 1)
 
     include_workspace = not args.no_workspace
@@ -189,8 +219,8 @@ def main():
         run_chat(
             prompt=args.prompt,
             mode=args.mode,
-            model=args.model,
-            base_url=args.base_url,
+            model=model,
+            base_url=base_url,
             cloud_model=args.cloud_model,
             workspaces=workspaces,
             include_workspace=include_workspace,
