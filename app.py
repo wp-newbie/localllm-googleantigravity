@@ -1,21 +1,19 @@
 """Streamlit Web GUI for Antigravity Local LLM & Hybrid Agent.
 
 Provides an interactive chat interface supporting:
-- Local LLM inference (LM Studio & Ollama via LocalOpenAIAgentConfig with .lightweight())
-- Dynamic model selection based on available LM Studio and Ollama models
+- Local LLM inference via LM Studio (using LocalOpenAIAgentConfig with .lightweight())
+- Dynamic model selection based on available LM Studio models (Qwen 2.5, Gemma 4, etc.)
 - Multi-workspace selection from ANTIGRAVITY_WORKSPACE environment / config
 - Include/Exclude workspace folder toggle and subfolder exclusion controls
-- One-click Local Ollama Server startup and health checks
 - Hybrid task routing (local coding vs cloud strategic planning)
 - Real-time streaming responses with graceful connection recovery
-- Live endpoint health monitoring and model discovery
+- Live endpoint health monitoring
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
 import sys
 import time
 from typing import AsyncGenerator, Iterator
@@ -32,16 +30,13 @@ try:
         DEFAULT_LM_STUDIO_BASE_URL,
         DEFAULT_LOCAL_BASE_URL,
         DEFAULT_LOCAL_MODEL,
-        DEFAULT_OLLAMA_BASE_URL,
         DEFAULT_PROJECT_WORKSPACE,
         get_available_local_models,
         get_configured_workspaces,
         get_lm_studio_models,
-        get_ollama_models,
         resolve_workspaces,
     )
 except ImportError:
-    # Handle Streamlit in-memory module cache invalidation
     import importlib
     import config.agent_config
     importlib.reload(config.agent_config)
@@ -51,19 +46,14 @@ except ImportError:
         DEFAULT_LM_STUDIO_BASE_URL,
         DEFAULT_LOCAL_BASE_URL,
         DEFAULT_LOCAL_MODEL,
-        DEFAULT_OLLAMA_BASE_URL,
         DEFAULT_PROJECT_WORKSPACE,
         get_available_local_models,
         get_configured_workspaces,
         get_lm_studio_models,
-        get_ollama_models,
         resolve_workspaces,
     )
-from router.hybrid_router import HybridAgentRouter, TaskComplexity
 
-OLLAMA_EXE_PATH = (
-    r"C:\Users\tobsk\AppData\Local\Microsoft\WinGet\Packages\Ollama.Ollama.Portable_Microsoft.Winget.Source_8wekyb3d8bbwe\ollama.exe"
-)
+from router.hybrid_router import HybridAgentRouter, TaskComplexity
 
 st.set_page_config(
     page_title="Antigravity Local LLM & Hybrid Agent",
@@ -86,29 +76,10 @@ def sync_stream(async_gen: AsyncGenerator[str, None]) -> Iterator[str]:
         loop.close()
 
 
-def launch_ollama_server() -> bool:
-    """Launches local Ollama server in a detached background process."""
-    if os.path.exists(OLLAMA_EXE_PATH):
-        DETACHED_PROCESS = 0x00000008
-        CREATE_NEW_PROCESS_GROUP = 0x00000200
-        CREATE_NO_WINDOW = 0x08000000
-        try:
-            subprocess.Popen(
-                [OLLAMA_EXE_PATH, "serve"],
-                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
-                close_fds=True,
-            )
-            return True
-        except Exception as err:
-            st.error(f"Failed to start Ollama: {err}")
-            return False
-    return False
-
-
 # --- Sidebar: Configuration & Health ---
 with st.sidebar:
     st.title("⚙️ Agent Settings")
-    st.markdown("Configure local models (LM Studio / Ollama), workspaces, and cloud routing.")
+    st.markdown("Configure local models (LM Studio), workspaces, and cloud routing.")
 
     # 1. Project Workspace Section
     st.subheader("📂 Project Workspace Folder")
@@ -195,29 +166,12 @@ with st.sidebar:
 
     st.divider()
 
-    # 2. Local Inference Provider & Model Selection
-    st.subheader("🖥️ Local LLM Provider")
-    provider_choice = st.radio(
-        "Select Local Server",
-        options=["LM Studio (localhost:1234)", "Ollama (localhost:11434)", "Custom Endpoint"],
-        index=0,
-        help="Select whether you are running LM Studio or Ollama.",
-    )
-
-    if "LM Studio" in provider_choice:
-        default_url = DEFAULT_LM_STUDIO_BASE_URL
-        provider_name = "LM Studio"
-    elif "Ollama" in provider_choice:
-        default_url = DEFAULT_OLLAMA_BASE_URL
-        provider_name = "Ollama"
-    else:
-        default_url = "http://localhost:8000/v1"
-        provider_name = "Custom"
-
+    # 2. Local Inference via LM Studio
+    st.subheader("🖥️ Local LLM (LM Studio)")
     base_url = st.text_input(
-        f"{provider_name} Base URL",
-        value=default_url,
-        help=f"OpenAI-compatible endpoint for {provider_name}.",
+        "LM Studio Base URL",
+        value=DEFAULT_LM_STUDIO_BASE_URL,
+        help="OpenAI-compatible endpoint for LM Studio (default: http://localhost:1234/v1).",
     )
 
     # Health check
@@ -225,37 +179,29 @@ with st.sidebar:
     is_healthy, health_msg = router_probe.check_endpoint_health(timeout=1.5)
 
     if is_healthy:
-        st.success(f"🟢 {provider_name} server is online and responsive!")
+        st.success("🟢 LM Studio server is online and ready!")
     else:
-        st.error(f"⚠️ {provider_name} server at `{base_url}` is offline.")
-        if "Ollama" in provider_choice:
-            if st.button("🚀 Start Local Ollama Server", use_container_width=True):
-                with st.spinner("Starting Ollama background process..."):
-                    if launch_ollama_server():
-                        time.sleep(3)
-                        st.rerun()
-                    else:
-                        st.warning("Ollama executable not found. Run `ollama serve` in PowerShell.")
-        elif "LM Studio" in provider_choice:
-            st.caption("Tip: In LM Studio, click the **Local Server (↔)** tab and ensure the server is turned **ON**.")
+        st.error(f"⚠️ LM Studio server at `{base_url}` is offline.")
+        st.caption("Tip: In LM Studio, click the **Local Server (↔)** tab on the left and switch the server to **ON**.")
 
-    # Dynamically discover models based on the selected provider
-    if "LM Studio" in provider_choice:
-        available_models = get_lm_studio_models(base_url)
-    elif "Ollama" in provider_choice:
-        available_models = get_ollama_models(base_url)
-    else:
-        available_models = get_available_local_models("auto", base_url)
+    if st.button("🔍 Check Server Health", use_container_width=True):
+        is_h, msg = router_probe.check_endpoint_health()
+        if is_h:
+            st.success(f"Connected! {msg}")
+        else:
+            st.error(f"Offline: {msg}")
 
+    # Discover LM Studio models
+    available_models = get_lm_studio_models(base_url)
     if not available_models:
-        available_models = ["qwen2.5-7b-instruct-1m", "qwen2.5-coder:7b"]
+        available_models = ["qwen2.5-7b-instruct-1m", "gemma-4-e4b-it"]
 
     model_options = available_models + ["Custom Model Name..."]
     chosen_model = st.selectbox(
-        f"Available {provider_name} Models",
+        "Available LM Studio Models",
         options=model_options,
         index=0,
-        help=f"Discovered models available in {provider_name}.",
+        help="Discovered models from LM Studio memory and local library.",
     )
 
     if chosen_model == "Custom Model Name...":
@@ -302,13 +248,13 @@ with st.sidebar:
 # --- Main Area ---
 st.title("🤖 Antigravity Local LLM & Hybrid Agent")
 st.caption(
-    f"Powered by **Google Antigravity SDK (`google-antigravity`)** | Running on **{provider_name}** (`{local_model}`)"
+    f"Powered by **Google Antigravity SDK (`google-antigravity`)** | Connected to **LM Studio** (`{local_model}`)"
 )
 
 # Status bar metrics
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric(f"{provider_name}", "Online" if is_healthy else "Offline")
+    st.metric("LM Studio", "Online" if is_healthy else "Offline")
 with col2:
     st.metric("Active Model", local_model)
 with col3:
@@ -336,7 +282,7 @@ if "messages" not in st.session_state:
         {
             "role": "assistant",
             "content": (
-                f"👋 Hello! I am your Antigravity Agent. I am connected to **{provider_name}** "
+                f"👋 Hello! I am your Antigravity Agent running on **LM Studio** "
                 f"using **`{local_model}`** with `.lightweight()` optimizations for lightning-fast coding, "
                 "and can seamlessly escalate complex architecture tasks to cloud models. How can I help you today?"
             ),
@@ -419,9 +365,8 @@ if prompt:
             )
         except ConnectionError as ce:
             error_msg = (
-                f"⚠️ **Could not connect to {provider_name} server at `{base_url}`.**\n\n"
-                f"- **If using LM Studio**: Ensure the server is turned **ON** in the LM Studio local server tab (port 1234).\n"
-                f"- **If using Ollama**: Click the **'🚀 Start Local Ollama Server'** button in the sidebar or run `ollama serve`.\n"
+                f"⚠️ **Could not connect to LM Studio server at `{base_url}`.**\n\n"
+                f"- **Quick Fix**: Open LM Studio, click the **Local Server (↔)** tab, and ensure the server toggle is **ON** (port 1234).\n"
                 f"- **Or**: Switch the routing mode in the sidebar to **⚡ Hybrid** or **☁️ Cloud Only**."
             )
             st.error(error_msg)

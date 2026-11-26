@@ -1,6 +1,6 @@
 """Agent configuration module for Google Antigravity SDK.
 
-Provides modular configurations for local inference (Ollama, LM Studio, vLLM)
+Provides modular configurations for local inference (LM Studio, OpenAI-compatible local servers)
 using `LocalOpenAIAgentConfig` with `.lightweight()` optimizations, as well
 as cloud agent configurations for high-level reasoning and planning.
 Includes flexible workspace inclusion, discovery, and folder exclusion controls.
@@ -25,11 +25,9 @@ from google.antigravity import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
-
-DEFAULT_LOCAL_BASE_URL = DEFAULT_OLLAMA_BASE_URL
-DEFAULT_LOCAL_MODEL = "qwen2.5-coder:7b"
+DEFAULT_LOCAL_BASE_URL = DEFAULT_LM_STUDIO_BASE_URL
+DEFAULT_LOCAL_MODEL = "qwen2.5-7b-instruct-1m"
 DEFAULT_CLOUD_MODEL = "gemini-2.5-flash"
 
 DEFAULT_EXCLUDED_FOLDERS = [
@@ -67,7 +65,6 @@ def get_lm_studio_models(base_url: str = DEFAULT_LM_STUDIO_BASE_URL) -> list[str
             data = resp.json().get("data", [])
             for item in data:
                 mid = item.get("id")
-                # Filter out embedding-only models from primary LLM selection
                 if mid and "embed" not in mid.lower():
                     if mid.lower() not in seen:
                         seen.add(mid.lower())
@@ -89,68 +86,12 @@ def get_lm_studio_models(base_url: str = DEFAULT_LM_STUDIO_BASE_URL) -> list[str
         except Exception:
             pass
 
-    return models if models else ["qwen2.5-7b-instruct-1m"]
+    return models if models else ["qwen2.5-7b-instruct-1m", "gemma-4-e4b-it"]
 
 
-def get_ollama_models(base_url: str = DEFAULT_OLLAMA_BASE_URL) -> list[str]:
-    """Queries Ollama for locally downloaded and tagged models."""
-    models: list[str] = []
-    seen: set[str] = set()
-
-    # Try /v1/models then /api/tags
-    v1_url = f"{base_url.rstrip('/')}/models"
-    native_url = f"{base_url.replace('/v1', '').rstrip('/')}/api/tags"
-
-    for url in [v1_url, native_url]:
-        try:
-            resp = requests.get(url, timeout=1.5)
-            if resp.status_code == 200:
-                data = resp.json()
-                if "data" in data and isinstance(data["data"], list):
-                    for item in data["data"]:
-                        mid = item.get("id")
-                        if mid and mid.lower() not in seen:
-                            seen.add(mid.lower())
-                            models.append(mid)
-                elif "models" in data and isinstance(data["models"], list):
-                    for item in data["models"]:
-                        mid = item.get("name")
-                        if mid and mid.lower() not in seen:
-                            seen.add(mid.lower())
-                            models.append(mid)
-            if models:
-                break
-        except Exception:
-            continue
-
-    return models if models else ["qwen2.5-coder:7b", "gemma4:latest", "qwen2.5-coder:0.5b"]
-
-
-def get_available_local_models(provider: str = "auto", base_url: Optional[str] = None) -> list[str]:
-    """Discovers available models based on provider (lmstudio, ollama, or auto)."""
-    prov = provider.lower()
-    if "lm" in prov:
-        return get_lm_studio_models(base_url or DEFAULT_LM_STUDIO_BASE_URL)
-    elif "ollama" in prov:
-        return get_ollama_models(base_url or DEFAULT_OLLAMA_BASE_URL)
-
-    # Auto: Check base_url or query both
-    if base_url:
-        if "1234" in base_url:
-            return get_lm_studio_models(base_url)
-        elif "11434" in base_url:
-            return get_ollama_models(base_url)
-
-    # Return union of both
-    lm = get_lm_studio_models()
-    ol = get_ollama_models()
-    combined: list[str] = []
-    seen: set[str] = set()
-    for m in lm + ol:
-        if m.lower() not in seen:
-            seen.add(m.lower())
-            combined.append(m)
-    return combined
+def get_available_local_models(provider: str = "lmstudio", base_url: Optional[str] = None) -> list[str]:
+    """Discovers available models based on provider (default: LM Studio)."""
+    return get_lm_studio_models(base_url or DEFAULT_LM_STUDIO_BASE_URL)
 
 
 def get_configured_workspaces(project_dir: Optional[str] = None) -> list[str]:

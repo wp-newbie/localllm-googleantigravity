@@ -6,14 +6,12 @@ from config.agent_config import (
     DEFAULT_LM_STUDIO_BASE_URL,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_MODEL,
-    DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_PROJECT_WORKSPACE,
     get_available_local_models,
     get_cloud_agent_config,
     get_configured_workspaces,
     get_lm_studio_models,
     get_local_agent_config,
-    get_ollama_models,
     resolve_workspaces,
 )
 
@@ -23,13 +21,11 @@ __all__ = [
     "DEFAULT_LM_STUDIO_BASE_URL",
     "DEFAULT_LOCAL_BASE_URL",
     "DEFAULT_LOCAL_MODEL",
-    "DEFAULT_OLLAMA_BASE_URL",
     "DEFAULT_PROJECT_WORKSPACE",
     "get_available_local_models",
     "get_cloud_agent_config",
     "get_configured_workspaces",
     "get_lm_studio_models",
     "get_local_agent_config",
-    "get_ollama_models",
     "resolve_workspaces",
 ]
