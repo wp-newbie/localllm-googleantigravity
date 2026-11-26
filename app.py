@@ -299,22 +299,7 @@ for msg in st.session_state.messages:
                 color = "green" if target == "LOCAL" else "blue"
                 st.caption(f":{color}[Routed to {target}]: {reason}")
 
-# Quick action prompts
-st.markdown("**Quick Prompts:**")
-qp_cols = st.columns(3)
-quick_prompt = None
-with qp_cols[0]:
-    if st.button("⚡ Local: Inspect Workspace Structure", use_container_width=True):
-        quick_prompt = "Examine the files in the attached project workspace and give an overview of its architecture."
-with qp_cols[1]:
-    if st.button("⚡ Local: Fibonacci with Memoization", use_container_width=True):
-        quick_prompt = "Write a Python function to calculate Fibonacci numbers using memoization."
-with qp_cols[2]:
-    if st.button("☁️ Cloud: System Architecture Plan", use_container_width=True):
-        quick_prompt = "Design a comprehensive multi-phase architecture and roadmap for a distributed transaction engine."
-
-user_input = st.chat_input("Enter your instruction, coding task, or architecture request...")
-prompt = user_input or quick_prompt
+prompt = st.chat_input("Enter your instruction, coding task, or architecture request...")
 
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
