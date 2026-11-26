@@ -394,6 +394,112 @@ def search_workspace_content(root_dir: str, query: str, exclusions: list[str], m
     return results
 
 
+def scan_workspace_prompts(workspaces: list[str] | None, max_prompts: int = 4) -> list[dict[str, str]]:
+    """Inspects the active workspace structure to dynamically suggest context-aware quick prompts."""
+    if not workspaces:
+        return [
+            {
+                "label": "🐍 Memoized Fibonacci",
+                "prompt": "Write a clean Python function to calculate Fibonacci numbers using memoization.",
+            },
+            {
+                "label": "🏗️ Microservices Architecture",
+                "prompt": "Design an event-driven microservices architecture with real-time websocket updates.",
+            },
+            {
+                "label": "🧪 Unit Tests with Pytest",
+                "prompt": "Write comprehensive pytest unit tests covering edge cases for an API handler.",
+            },
+        ]
+
+    prompts: list[dict[str, str]] = []
+
+    for ws in workspaces:
+        if not os.path.isdir(ws):
+            continue
+        ws_name = os.path.basename(ws.rstrip("/\\")) or ws
+        try:
+            items = set(os.listdir(ws))
+        except Exception:
+            continue
+
+        # 1. Package.json (Node / Vite / Electron / React)
+        if "package.json" in items:
+            pkg_path = os.path.join(ws, "package.json")
+            pkg_data = {}
+            try:
+                with open(pkg_path, "r", encoding="utf-8", errors="ignore") as f:
+                    pkg_data = json.load(f)
+            except Exception:
+                pass
+
+            deps = {**pkg_data.get("dependencies", {}), **pkg_data.get("devDependencies", {})}
+            scripts = list(pkg_data.get("scripts", {}).keys())
+
+            if "electron" in deps or "electron" in items:
+                prompts.append({
+                    "label": "⚡ Inspect Electron & IPC",
+                    "prompt": f"Examine the Electron main process, IPC bridge, and preload scripts in `{ws_name}`.",
+                })
+            if "vite" in deps or "vite.config.ts" in items or "vite.config.js" in items:
+                prompts.append({
+                    "label": "⚛️ Review Vite & UI Setup",
+                    "prompt": f"Review `vite.config.ts` and the frontend build pipeline in `{ws_name}`.",
+                })
+            if "src" in items:
+                prompts.append({
+                    "label": "📂 Explore src/ Structure",
+                    "prompt": f"Inspect the component architecture and core source code in `{ws_name}/src`.",
+                })
+            if scripts:
+                scripts_preview = ", ".join(scripts[:4])
+                prompts.append({
+                    "label": "📦 Audit package.json Scripts",
+                    "prompt": f"Audit `package.json` in `{ws_name}`, review dependencies, and explain available scripts ({scripts_preview}).",
+                })
+
+        # 2. Python files / scripts
+        py_files = [f for f in items if f.endswith(".py")]
+        if py_files:
+            names_preview = ", ".join(py_files[:3])
+            prompts.append({
+                "label": "🐍 Analyze Python Scripts",
+                "prompt": f"Analyze the Python scripts ({names_preview}) in `{ws_name}` and explain their functions and integration.",
+            })
+
+        # 3. Documentation (README)
+        if any(f.lower() == "readme.md" for f in items):
+            prompts.append({
+                "label": "📖 Summarize Project README",
+                "prompt": f"Read `{ws_name}/README.md` and summarize the project goal, main features, and setup instructions.",
+            })
+
+        # 4. Environment config
+        if any(f.startswith(".env") for f in items):
+            prompts.append({
+                "label": "🔐 Audit Environment Config",
+                "prompt": f"Inspect the environment configuration files in `{ws_name}` and verify required variables.",
+            })
+
+        # 5. General workspace architecture overview
+        prompts.append({
+            "label": f"🗺️ Map {ws_name} Architecture",
+            "prompt": f"Inspect the directory layout of `{ws_name}` and provide an architectural overview of this project.",
+        })
+
+    # Deduplicate by label
+    seen = set()
+    result = []
+    for p in prompts:
+        if p["label"] not in seen:
+            seen.add(p["label"])
+            result.append(p)
+        if len(result) >= max_prompts:
+            break
+
+    return result
+
+
 tab_chat, tab_explorer = st.tabs(["💬 Chat & Assistant", "📁 Workspace Code Explorer"])
 
 with tab_chat:
