@@ -78,7 +78,8 @@ class HybridAgentRouter:
         workspaces: Optional[list[str] | str] = None,
         include_workspace: bool = True,
         exclude_folders: Optional[list[str]] = None,
-        enable_lightweight: bool = True,
+        enable_lightweight: bool = False,
+        full_ide_permissions: bool = True,
         auto_fallback: bool = True,
     ):
         self.local_model = normalize_model_name(local_model)
@@ -88,6 +89,7 @@ class HybridAgentRouter:
         self.workspaces = resolve_workspaces(workspaces, enabled=include_workspace)
         self.exclude_folders = exclude_folders if exclude_folders is not None else DEFAULT_EXCLUDED_FOLDERS
         self.enable_lightweight = enable_lightweight
+        self.full_ide_permissions = full_ide_permissions
         self.auto_fallback = auto_fallback
         self._planning_pattern = re.compile("|".join(self.PLANNING_KEYWORDS), re.IGNORECASE)
 
@@ -181,7 +183,7 @@ class HybridAgentRouter:
                 yield token
 
     async def _run_local(self, prompt: str) -> AsyncGenerator[str, None]:
-        """Spawns an agent using LocalOpenAIAgentConfig with .lightweight() and configured workspaces."""
+        """Spawns an agent using LocalOpenAIAgentConfig with configured workspaces and full IDE permissions."""
         config = get_local_agent_config(
             model=self.local_model,
             base_url=self.local_base_url,
@@ -189,6 +191,7 @@ class HybridAgentRouter:
             include_workspace=self.include_workspace,
             exclude_folders=self.exclude_folders,
             lightweight=self.enable_lightweight,
+            full_ide_permissions=self.full_ide_permissions,
         )
         async with Agent(config) as agent:
             response = await agent.chat(prompt)
@@ -202,6 +205,7 @@ class HybridAgentRouter:
             workspaces=self.workspaces,
             include_workspace=self.include_workspace,
             exclude_folders=self.exclude_folders,
+            full_ide_permissions=self.full_ide_permissions,
         )
         async with Agent(config) as agent:
             response = await agent.chat(prompt)

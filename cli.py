@@ -68,8 +68,9 @@ async def run_chat(
     workspaces: list[str] | None,
     include_workspace: bool,
     exclude_folders: list[str] | None,
-    lightweight: bool,
-    auto_fallback: bool,
+    lightweight: bool = False,
+    full_ide_permissions: bool = True,
+    auto_fallback: bool = True,
 ):
     """Executes a chat request via the HybridAgentRouter."""
     router = HybridAgentRouter(
@@ -80,6 +81,7 @@ async def run_chat(
         include_workspace=include_workspace,
         exclude_folders=exclude_folders,
         enable_lightweight=lightweight,
+        full_ide_permissions=full_ide_permissions,
         auto_fallback=auto_fallback,
     )
 
@@ -87,6 +89,7 @@ async def run_chat(
     print(f"\n--- Running Execution ---")
     print(f"Mode          : {mode.upper()}")
     print(f"Local Model   : {model} (Endpoint: {base_url})")
+    print(f"IDE Parity    : {full_ide_permissions} (policy.allow_all + autonomous tools)")
     print(f"Workspaces    : {ws_status}")
     print(f"Excluded Dirs : {router.exclude_folders if include_workspace else 'N/A'}")
     print(f"Lightweight   : {lightweight}")
@@ -180,6 +183,11 @@ def main():
         help="Disable .lightweight() optimization on LocalOpenAIAgentConfig.",
     )
     parser.add_argument(
+        "--no-full-permissions",
+        action="store_true",
+        help="Disable full Antigravity IDE permissions parity.",
+    )
+    parser.add_argument(
         "--no-fallback",
         action="store_true",
         help="Disable automatic escalation to cloud model when local inference is unavailable.",
@@ -226,6 +234,7 @@ def main():
             include_workspace=include_workspace,
             exclude_folders=exclude_list,
             lightweight=not args.no_lightweight,
+            full_ide_permissions=not args.no_full_permissions,
             auto_fallback=not args.no_fallback,
         )
     )

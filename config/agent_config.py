@@ -43,6 +43,17 @@ DEFAULT_EXCLUDED_FOLDERS = [
     "__pycache__",
 ]
 
+# Tools matching Antigravity IDE agent capabilities
+IDE_BUILTIN_TOOLS = [
+    BuiltinTools.RUN_COMMAND,
+    BuiltinTools.VIEW_FILE,
+    BuiltinTools.EDIT_FILE,
+    BuiltinTools.CREATE_FILE,
+    BuiltinTools.LIST_DIR,
+    BuiltinTools.SEARCH_DIR,
+    BuiltinTools.FIND_FILE,
+]
+
 DEFAULT_LOCAL_SYSTEM_INSTRUCTIONS = (
     "You are an efficient, accurate local coding assistant running on a local LLM. "
     "Keep responses concise, prioritize direct code answers, and minimize unnecessary token overhead. "
@@ -200,7 +211,8 @@ def resolve_workspaces(
 def get_local_agent_config(
     model: str = DEFAULT_LOCAL_MODEL,
     base_url: str = DEFAULT_LOCAL_BASE_URL,
-    lightweight: bool = True,
+    lightweight: bool = False,
+    full_ide_permissions: bool = True,
     system_instructions: Optional[str] = None,
     workspaces: Optional[list[str] | str] = None,
     include_workspace: bool = True,
@@ -208,7 +220,7 @@ def get_local_agent_config(
     policies: Optional[Any] = None,
     **kwargs: Any,
 ) -> LocalOpenAIAgentConfig:
-    """Creates a LocalOpenAIAgentConfig tuned for local OpenAI-compatible endpoints."""
+    """Creates a LocalOpenAIAgentConfig tuned for local OpenAI-compatible endpoints with Antigravity IDE parity."""
     instructions = system_instructions or DEFAULT_LOCAL_SYSTEM_INSTRUCTIONS
     active_workspaces = resolve_workspaces(workspaces, enabled=include_workspace)
 
@@ -218,12 +230,20 @@ def get_local_agent_config(
 
     effective_policies = policies if policies is not None else policy.allow_all()
 
+    capabilities = kwargs.pop("capabilities", None)
+    if capabilities is None and full_ide_permissions:
+        capabilities = CapabilitiesConfig(
+            agent_behavior=AgentBehavior.AUTONOMOUS,
+            enabled_tools=IDE_BUILTIN_TOOLS,
+        )
+
     config = LocalOpenAIAgentConfig(
         model=model,
         base_url=base_url,
         system_instructions=instructions,
         workspaces=active_workspaces,
         policies=effective_policies,
+        capabilities=capabilities,
         **kwargs,
     )
 
@@ -236,6 +256,9 @@ def get_local_agent_config(
             exclusions,
         )
         config = config.lightweight()
+        # Ensure policies remain allow_all even after lightweight preset
+        if effective_policies:
+            config.policies = effective_policies
 
     return config
 
@@ -247,9 +270,10 @@ def get_cloud_agent_config(
     include_workspace: bool = True,
     exclude_folders: Optional[list[str]] = None,
     policies: Optional[Any] = None,
+    full_ide_permissions: bool = True,
     **kwargs: Any,
 ) -> LocalAgentConfig:
-    """Creates a LocalAgentConfig for cloud models (e.g. Gemini) for complex planning tasks."""
+    """Creates a LocalAgentConfig for cloud models (e.g. Gemini) with full IDE permissions."""
     instructions = system_instructions or DEFAULT_CLOUD_SYSTEM_INSTRUCTIONS
     active_workspaces = resolve_workspaces(workspaces, enabled=include_workspace)
 
@@ -259,11 +283,19 @@ def get_cloud_agent_config(
 
     effective_policies = policies if policies is not None else policy.allow_all()
 
+    capabilities = kwargs.pop("capabilities", None)
+    if capabilities is None and full_ide_permissions:
+        capabilities = CapabilitiesConfig(
+            agent_behavior=AgentBehavior.AUTONOMOUS,
+            enabled_tools=IDE_BUILTIN_TOOLS,
+        )
+
     config = LocalAgentConfig(
         model=model,
         system_instructions=instructions,
         workspaces=active_workspaces,
         policies=effective_policies,
+        capabilities=capabilities,
         **kwargs,
     )
     return config

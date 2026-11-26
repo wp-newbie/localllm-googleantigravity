@@ -209,10 +209,19 @@ with st.sidebar:
     else:
         local_model = chosen_model
 
+    full_ide_permissions = st.toggle(
+        "Full Antigravity IDE Permissions",
+        value=True,
+        help="Grants local LLM full autonomous tool execution permissions matching Antigravity IDE (file reading, editing, creating, directory traversal, code search, and terminal commands).",
+    )
+
+    if full_ide_permissions:
+        st.caption("🛡️ **IDE Parity Active**: `policy.allow_all()` + Autonomous Terminal & File Tools")
+
     lightweight = st.toggle(
         "Enable .lightweight() Optimization",
-        value=True,
-        help="Restricts tool bloat, disables subagents, and tunes compaction for local inference.",
+        value=False,
+        help="Tunes compaction and focuses on 4 core development tools for smaller local models.",
     )
 
     st.divider()
@@ -337,6 +346,7 @@ if prompt:
         include_workspace=include_workspace,
         exclude_folders=selected_exclusions,
         enable_lightweight=lightweight,
+        full_ide_permissions=full_ide_permissions,
         auto_fallback=auto_fallback,
     )
 
