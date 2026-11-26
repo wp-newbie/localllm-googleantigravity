@@ -2,6 +2,7 @@
 
 Provides an interactive chat interface supporting:
 - Local LLM inference (Ollama via LocalOpenAIAgentConfig with .lightweight())
+- Workspace folder inclusion (e.g. F:\\Personal) for agent tools
 - Hybrid task routing (local coding vs cloud strategic planning)
 - Real-time streaming responses
 - Live endpoint health monitoring and model discovery
@@ -23,6 +24,8 @@ from config.agent_config import (
     DEFAULT_CLOUD_MODEL,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_MODEL,
+    DEFAULT_PROJECT_WORKSPACE,
+    resolve_workspaces,
 )
 from router.hybrid_router import HybridAgentRouter, TaskComplexity
 
@@ -50,7 +53,21 @@ def sync_stream(async_gen: AsyncGenerator[str, None]) -> Iterator[str]:
 # --- Sidebar: Configuration & Health ---
 with st.sidebar:
     st.title("⚙️ Agent Settings")
-    st.markdown("Configure local inference and cloud escalation.")
+    st.markdown("Configure local inference, project workspace, and cloud escalation.")
+
+    st.subheader("📂 Project Workspace Folder")
+    workspace_input = st.text_input(
+        "Local Project Directory",
+        value=DEFAULT_PROJECT_WORKSPACE or "F:\\Personal",
+        help="Local codebase directory for the agent to inspect, read, and write (e.g. F:\\Personal).",
+    )
+    resolved_workspaces = resolve_workspaces(workspace_input)
+    if resolved_workspaces:
+        st.success(f"✅ Included Workspace: `{resolved_workspaces[0]}`")
+    elif workspace_input:
+        st.warning(f"⚠️ Directory not found: `{workspace_input}`")
+
+    st.divider()
 
     st.subheader("Local Inference (Ollama / vLLM)")
     base_url = st.text_input(
@@ -134,7 +151,8 @@ with col3:
     )
     st.metric("Routing Mode", mode_label)
 with col4:
-    st.metric("Lightweight Preset", "Active" if lightweight else "Standard")
+    ws_display = os.path.basename(resolved_workspaces[0]) if resolved_workspaces else "None"
+    st.metric("Workspace", ws_display)
 
 # Initialize session state for messages
 if "messages" not in st.session_state:
@@ -166,11 +184,11 @@ st.markdown("**Quick Prompts:**")
 qp_cols = st.columns(3)
 quick_prompt = None
 with qp_cols[0]:
+    if st.button("⚡ Local: Inspect Workspace Structure", use_container_width=True):
+        quick_prompt = "Examine the files in the attached project workspace and give an overview of its architecture."
+with qp_cols[1]:
     if st.button("⚡ Local: Fibonacci with Memoization", use_container_width=True):
         quick_prompt = "Write a Python function to calculate Fibonacci numbers using memoization."
-with qp_cols[1]:
-    if st.button("⚡ Local: FastAPI CRUD Endpoint", use_container_width=True):
-        quick_prompt = "Write a minimal FastAPI route for creating and retrieving user items."
 with qp_cols[2]:
     if st.button("☁️ Cloud: System Architecture Plan", use_container_width=True):
         quick_prompt = "Design a comprehensive multi-phase architecture and roadmap for a distributed transaction engine."
@@ -191,11 +209,12 @@ if prompt:
     elif "Cloud" in mode_selection:
         force_mode = "cloud"
 
-    # Instantiate router
+    # Instantiate router with resolved workspaces
     router = HybridAgentRouter(
         local_model=local_model,
         local_base_url=base_url,
         cloud_model=cloud_model,
+        workspaces=resolved_workspaces,
         enable_lightweight=lightweight,
         auto_fallback=auto_fallback,
     )

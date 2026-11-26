@@ -40,3 +40,9 @@ Thumbs.db
 *.log
 .env
 .env.local
+
+# Personal folders and local user workspaces
+personal/
+Personal/
+workspaces/
+workspace/

@@ -1,13 +1,14 @@
 """CLI test and demonstration script for Antigravity Local LLM integration.
 
 Validates local endpoint health, executes queries through LocalOpenAIAgentConfig,
-and demonstrates hybrid routing and fallback capabilities.
+and demonstrates hybrid routing and fallback capabilities with workspace folder support.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import time
 
@@ -15,8 +16,10 @@ from config.agent_config import (
     DEFAULT_CLOUD_MODEL,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_MODEL,
+    DEFAULT_PROJECT_WORKSPACE,
     get_cloud_agent_config,
     get_local_agent_config,
+    resolve_workspaces,
 )
 from router.hybrid_router import HybridAgentRouter
 
@@ -58,6 +61,7 @@ async def run_chat(
     model: str,
     base_url: str,
     cloud_model: str,
+    workspaces: list[str] | None,
     lightweight: bool,
     auto_fallback: bool,
 ):
@@ -66,6 +70,7 @@ async def run_chat(
         local_model=model,
         local_base_url=base_url,
         cloud_model=cloud_model,
+        workspaces=workspaces,
         enable_lightweight=lightweight,
         auto_fallback=auto_fallback,
     )
@@ -73,6 +78,7 @@ async def run_chat(
     print(f"\n--- Running Execution ---")
     print(f"Mode          : {mode.upper()}")
     print(f"Local Model   : {model} (Endpoint: {base_url})")
+    print(f"Workspaces    : {router.workspaces or 'Default'}")
     print(f"Lightweight   : {lightweight}")
     print(f"Cloud Fallback: {cloud_model} (Enabled: {auto_fallback})")
     print(f"Prompt        : {prompt}")
@@ -130,6 +136,13 @@ def main():
         help=f"Cloud model target for planning and fallback (default: {DEFAULT_CLOUD_MODEL}).",
     )
     parser.add_argument(
+        "--workspace",
+        "-w",
+        type=str,
+        default=DEFAULT_PROJECT_WORKSPACE,
+        help=f"Local project folder to include in the agent's workspace (default: {DEFAULT_PROJECT_WORKSPACE}).",
+    )
+    parser.add_argument(
         "--no-lightweight",
         action="store_true",
         help="Disable .lightweight() optimization on LocalOpenAIAgentConfig.",
@@ -147,6 +160,8 @@ def main():
         success = check_endpoint(args.base_url)
         sys.exit(0 if success else 1)
 
+    workspaces = resolve_workspaces(args.workspace)
+
     asyncio.run(
         run_chat(
             prompt=args.prompt,
@@ -154,6 +169,7 @@ def main():
             model=args.model,
             base_url=args.base_url,
             cloud_model=args.cloud_model,
+            workspaces=workspaces,
             lightweight=not args.no_lightweight,
             auto_fallback=not args.no_fallback,
         )

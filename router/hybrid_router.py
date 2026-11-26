@@ -21,8 +21,10 @@ from config.agent_config import (
     DEFAULT_CLOUD_MODEL,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_MODEL,
+    DEFAULT_PROJECT_WORKSPACE,
     get_cloud_agent_config,
     get_local_agent_config,
+    resolve_workspaces,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,25 +64,21 @@ class HybridAgentRouter:
         local_model: str = DEFAULT_LOCAL_MODEL,
         local_base_url: str = DEFAULT_LOCAL_BASE_URL,
         cloud_model: str = DEFAULT_CLOUD_MODEL,
+        workspaces: Optional[list[str] | str] = None,
         enable_lightweight: bool = True,
         auto_fallback: bool = True,
     ):
         self.local_model = local_model
         self.local_base_url = local_base_url.rstrip("/")
         self.cloud_model = cloud_model
+        self.workspaces = resolve_workspaces(workspaces)
         self.enable_lightweight = enable_lightweight
         self.auto_fallback = auto_fallback
         self._planning_pattern = re.compile("|".join(self.PLANNING_KEYWORDS), re.IGNORECASE)
 
     def check_endpoint_health(self, timeout: float = 2.5) -> Tuple[bool, str]:
-        """Probes the local Ollama/OpenAI-compatible server for connectivity and status.
-
-        Returns:
-            Tuple of (is_healthy, message).
-        """
-        # Try /v1/models (standard OpenAI endpoint)
+        """Probes the local Ollama/OpenAI-compatible server for connectivity and status."""
         v1_url = f"{self.local_base_url}/models"
-        # Try /api/tags (Ollama native endpoint if base_url has /v1)
         root_url = self.local_base_url.replace("/v1", "")
         native_url = f"{root_url}/api/tags"
 
@@ -104,7 +102,6 @@ class HybridAgentRouter:
 
     def classify_task(self, prompt: str) -> RouteDecision:
         """Analyzes prompt content to determine if local or cloud escalation is appropriate."""
-        # 1. Check prompt length and complexity keywords
         if self._planning_pattern.search(prompt) or len(prompt.split()) > 250:
             return RouteDecision(
                 target="cloud",
@@ -112,7 +109,6 @@ class HybridAgentRouter:
                 reason="Task requires high-level architecture/strategic planning or deep reasoning.",
             )
 
-        # 2. Default to local lightweight execution
         return RouteDecision(
             target="local",
             complexity=TaskComplexity.LOCAL_LIGHTWEIGHT,
@@ -125,7 +121,6 @@ class HybridAgentRouter:
         force_mode: Optional[str] = None,  # "local", "cloud", or None for auto
     ) -> AsyncGenerator[str, None]:
         """Routes the prompt and streams tokens from the selected agent, falling back if needed."""
-        # Determine initial routing
         if force_mode == "cloud":
             decision = RouteDecision("cloud", TaskComplexity.CLOUD_PLANNING, "Forced cloud mode.")
         elif force_mode == "local":
@@ -133,10 +128,14 @@ class HybridAgentRouter:
         else:
             decision = self.classify_task(prompt)
 
-        logger.info("Routing decision: %s (%s)", decision.target.upper(), decision.reason)
+        logger.info(
+            "Routing decision: %s (%s) [Workspaces: %s]",
+            decision.target.upper(),
+            decision.reason,
+            self.workspaces,
+        )
 
         if decision.target == "local":
-            # Check local health before attempting invocation
             healthy, health_msg = self.check_endpoint_health()
             if not healthy:
                 logger.warning("Local endpoint unhealthy: %s", health_msg)
@@ -149,7 +148,6 @@ class HybridAgentRouter:
                     raise ConnectionError(f"Local LLM unavailable: {health_msg}")
 
             try:
-                # Attempt local execution
                 async for token in self._run_local(prompt):
                     yield token
                 return
@@ -163,15 +161,15 @@ class HybridAgentRouter:
                     raise
 
         else:
-            # Route directly to cloud
             async for token in self._run_cloud(prompt):
                 yield token
 
     async def _run_local(self, prompt: str) -> AsyncGenerator[str, None]:
-        """Spawns an agent using LocalOpenAIAgentConfig with .lightweight()."""
+        """Spawns an agent using LocalOpenAIAgentConfig with .lightweight() and configured workspaces."""
         config = get_local_agent_config(
             model=self.local_model,
             base_url=self.local_base_url,
+            workspaces=self.workspaces,
             lightweight=self.enable_lightweight,
         )
         async with Agent(config) as agent:
@@ -180,9 +178,10 @@ class HybridAgentRouter:
                 yield token
 
     async def _run_cloud(self, prompt: str) -> AsyncGenerator[str, None]:
-        """Spawns a cloud agent for complex planning or escalation."""
+        """Spawns a cloud agent for complex planning or escalation with configured workspaces."""
         config = get_cloud_agent_config(
             model=self.cloud_model,
+            workspaces=self.workspaces,
         )
         async with Agent(config) as agent:
             response = await agent.chat(prompt)
