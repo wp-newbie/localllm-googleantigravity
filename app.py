@@ -577,7 +577,8 @@ with tab_chat:
             start_time = time.perf_counter()
             active_model = local_model if target_name == "LOCAL" else cloud_model
 
-            with st.status(f"Thinking with {active_model}...", expanded=True) as status_box:
+            status_placeholder = st.empty()
+            with status_placeholder.status(f"Thinking with {active_model}...", expanded=True) as status_box:
                 status_box.write(f"🎯 **Routed To**: `{target_name}` ({active_model})")
                 status_box.write(f"📋 **Task Analysis**: {reason}")
                 if include_workspace and resolved_workspaces:
@@ -585,43 +586,43 @@ with tab_chat:
                 if full_ide_permissions:
                     status_box.write("🛡️ **IDE Parity**: Autonomous Permissions Active (`policy.allow_all`)")
 
-                try:
-                    stream_gen = router.execute(prompt, force_mode=force_mode)
-                    full_response = st.write_stream(sync_stream(stream_gen))
-                    duration_str = format_duration(time.perf_counter() - start_time)
-                    status_box.update(label=f"Worked for {duration_str}", state="complete", expanded=False)
+            try:
+                stream_gen = router.execute(prompt, force_mode=force_mode)
+                full_response = st.write_stream(sync_stream(stream_gen))
+                duration_str = format_duration(time.perf_counter() - start_time)
+                status_box.update(label=f"Worked for {duration_str}", state="complete", expanded=False)
 
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": full_response,
-                            "metadata": {
-                                "target": target_name,
-                                "reason": reason,
-                                "worked_for": duration_str,
-                                "model": active_model,
-                                "workspace": ", ".join(resolved_workspaces) if (include_workspace and resolved_workspaces) else None,
-                            },
-                        }
-                    )
-                except ConnectionError as ce:
-                    status_box.update(label="Connection Error", state="error", expanded=True)
-                    error_msg = (
-                        f"⚠️ **Could not connect to LM Studio server at `{base_url}`.**\n\n"
-                        f"- **Quick Fix**: Open LM Studio, click the **Local Server (↔)** tab, and ensure the server toggle is **ON** (port 1234).\n"
-                        f"- **Or**: Switch the routing mode in the sidebar to **⚡ Hybrid** or **☁️ Cloud Only**."
-                    )
-                    st.error(error_msg)
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": error_msg,
-                            "metadata": {"target": "ERROR", "reason": str(ce)},
-                        }
-                    )
-                except Exception as e:
-                    status_box.update(label="Execution Error", state="error", expanded=True)
-                    st.error(f"Execution Error: {e}")
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": full_response,
+                        "metadata": {
+                            "target": target_name,
+                            "reason": reason,
+                            "worked_for": duration_str,
+                            "model": active_model,
+                            "workspace": ", ".join(resolved_workspaces) if (include_workspace and resolved_workspaces) else None,
+                        },
+                    }
+                )
+            except ConnectionError as ce:
+                status_box.update(label="Connection Error", state="error", expanded=True)
+                error_msg = (
+                    f"⚠️ **Could not connect to LM Studio server at `{base_url}`.**\n\n"
+                    f"- **Quick Fix**: Open LM Studio, click the **Local Server (↔)** tab, and ensure the server toggle is **ON** (port 1234).\n"
+                    f"- **Or**: Switch the routing mode in the sidebar to **⚡ Hybrid** or **☁️ Cloud Only**."
+                )
+                st.error(error_msg)
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": error_msg,
+                        "metadata": {"target": "ERROR", "reason": str(ce)},
+                    }
+                )
+            except Exception as e:
+                status_box.update(label="Execution Error", state="error", expanded=True)
+                st.error(f"Execution Error: {e}")
 
 with tab_explorer:
     if not (include_workspace and resolved_workspaces):
