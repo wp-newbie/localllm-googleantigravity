@@ -23,36 +23,25 @@ import streamlit as st
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-try:
-    from config.agent_config import (
-        DEFAULT_CLOUD_MODEL,
-        DEFAULT_EXCLUDED_FOLDERS,
-        DEFAULT_LM_STUDIO_BASE_URL,
-        DEFAULT_LOCAL_BASE_URL,
-        DEFAULT_LOCAL_MODEL,
-        DEFAULT_PROJECT_WORKSPACE,
-        get_available_local_models,
-        get_configured_workspaces,
-        get_lm_studio_models,
-        resolve_workspaces,
-    )
-except ImportError:
-    import importlib
-    import config.agent_config
-    importlib.reload(config.agent_config)
-    from config.agent_config import (
-        DEFAULT_CLOUD_MODEL,
-        DEFAULT_EXCLUDED_FOLDERS,
-        DEFAULT_LM_STUDIO_BASE_URL,
-        DEFAULT_LOCAL_BASE_URL,
-        DEFAULT_LOCAL_MODEL,
-        DEFAULT_PROJECT_WORKSPACE,
-        get_available_local_models,
-        get_configured_workspaces,
-        get_lm_studio_models,
-        resolve_workspaces,
-    )
+import importlib
+import config.agent_config
+import router.hybrid_router
 
+importlib.reload(config.agent_config)
+importlib.reload(router.hybrid_router)
+
+from config.agent_config import (
+    DEFAULT_CLOUD_MODEL,
+    DEFAULT_EXCLUDED_FOLDERS,
+    DEFAULT_LM_STUDIO_BASE_URL,
+    DEFAULT_LOCAL_BASE_URL,
+    DEFAULT_LOCAL_MODEL,
+    DEFAULT_PROJECT_WORKSPACE,
+    get_available_local_models,
+    get_configured_workspaces,
+    get_lm_studio_models,
+    resolve_workspaces,
+)
 from router.hybrid_router import HybridAgentRouter, TaskComplexity
 
 st.set_page_config(

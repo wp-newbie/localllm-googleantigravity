@@ -81,6 +81,7 @@ class HybridAgentRouter:
         enable_lightweight: bool = False,
         full_ide_permissions: bool = True,
         auto_fallback: bool = True,
+        **kwargs: Any,
     ):
         self.local_model = normalize_model_name(local_model)
         self.local_base_url = local_base_url.rstrip("/")
