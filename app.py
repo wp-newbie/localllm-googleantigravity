@@ -527,7 +527,10 @@ with tab_chat:
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             if msg["role"] == "assistant" and msg.get("metadata", {}).get("worked_for"):
-                with st.expander(f"Worked for {msg['metadata']['worked_for']}", expanded=False):
+                status_state = msg["metadata"].get("status_state", "Finished")
+                time_str = msg["metadata"]["worked_for"]
+                label_text = f"{status_state} in {time_str}" if "in" not in time_str else f"{status_state} ({time_str})"
+                with st.expander(label_text, expanded=False):
                     st.caption(f"🎯 **Model**: `{msg['metadata'].get('model', 'local')}` | 📋 **Mode**: `{msg['metadata'].get('target', 'LOCAL')}`")
                     st.caption(f"ℹ️ **Routing Reason**: {msg['metadata'].get('reason', '')}")
                     if msg["metadata"].get("workspace"):
@@ -611,6 +614,8 @@ with tab_chat:
 
             def live_ticker():
                 while not stop_ticker.wait(1.0):
+                    if stop_ticker.is_set():
+                        break
                     elapsed = time.perf_counter() - start_time
                     dur = format_duration(elapsed)
                     try:
@@ -628,15 +633,17 @@ with tab_chat:
                 except Exception:
                     pass
 
+            is_finished = False
             try:
                 stream_gen = router.execute(prompt, force_mode=force_mode)
                 full_response = st.write_stream(sync_stream(stream_gen, on_first_token=on_first_token))
                 
                 stop_ticker.set()
-                ticker_thread.join(timeout=0.2)
+                ticker_thread.join(timeout=0.5)
                 
+                is_finished = True
                 duration_str = format_duration(time.perf_counter() - start_time)
-                status_box.update(label=f"Worked for {duration_str}", state="complete", expanded=False)
+                status_box.update(label=f"Finished in {duration_str}", state="complete", expanded=False)
 
                 st.session_state.messages.append(
                     {
@@ -646,6 +653,7 @@ with tab_chat:
                             "target": target_name,
                             "reason": reason,
                             "worked_for": duration_str,
+                            "status_state": "Finished",
                             "model": active_model,
                             "workspace": ", ".join(resolved_workspaces) if (include_workspace and resolved_workspaces) else None,
                         },
@@ -662,8 +670,10 @@ with tab_chat:
                     pass
             except ConnectionError as ce:
                 stop_ticker.set()
-                ticker_thread.join(timeout=0.2)
-                status_box.update(label="Connection Error", state="error", expanded=True)
+                ticker_thread.join(timeout=0.5)
+                is_finished = True
+                duration_str = format_duration(time.perf_counter() - start_time)
+                status_box.update(label=f"Stopped • Connection Error ({duration_str})", state="error", expanded=True)
                 error_msg = (
                     f"⚠️ **Could not connect to LM Studio server at `{base_url}`.**\n\n"
                     f"- **Quick Fix**: Open LM Studio, click the **Local Server (↔)** tab, and ensure the server toggle is **ON** (port 1234).\n"
@@ -674,14 +684,24 @@ with tab_chat:
                     {
                         "role": "assistant",
                         "content": error_msg,
-                        "metadata": {"target": "ERROR", "reason": str(ce)},
+                        "metadata": {"target": "ERROR", "reason": str(ce), "worked_for": duration_str, "status_state": "Stopped"},
                     }
                 )
             except Exception as e:
                 stop_ticker.set()
-                ticker_thread.join(timeout=0.2)
-                status_box.update(label="Execution Error", state="error", expanded=True)
+                ticker_thread.join(timeout=0.5)
+                is_finished = True
+                duration_str = format_duration(time.perf_counter() - start_time)
+                status_box.update(label=f"Stopped • Error ({duration_str})", state="error", expanded=True)
                 st.error(f"Execution Error: {e}")
+            finally:
+                stop_ticker.set()
+                if not is_finished:
+                    duration_str = format_duration(time.perf_counter() - start_time)
+                    try:
+                        status_box.update(label=f"Stopped ({duration_str})", state="complete", expanded=False)
+                    except Exception:
+                        pass
 
 with tab_explorer:
     if not (include_workspace and resolved_workspaces):
