@@ -83,7 +83,10 @@ antigravity-local-llm/
 Activate the virtual environment:
 
 ```powershell
-cd C:\Users\tobsk\.gemini\antigravity\scratch\antigravity-local-llm
+cd C:\Users\<username>\.gemini\antigravity\scratch\antigravity-local-llm
+# Or using the user profile variable:
+# cd $env:USERPROFILE\.gemini\antigravity\scratch\antigravity-local-llm
+
 .venv\Scripts\activate
 ```
 
