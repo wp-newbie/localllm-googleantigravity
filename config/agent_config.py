@@ -3,13 +3,14 @@
 Provides modular configurations for local inference (Ollama, LM Studio, vLLM)
 using `LocalOpenAIAgentConfig` with `.lightweight()` optimizations, as well
 as cloud agent configurations for high-level reasoning and planning.
-Includes flexible workspace inclusion and folder exclusion controls.
+Includes flexible workspace inclusion, discovery, and folder exclusion controls.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, Optional
 from google.antigravity import (
     Agent,
@@ -26,12 +27,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_LOCAL_MODEL = "qwen2.5-coder:7b"
 DEFAULT_LOCAL_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_CLOUD_MODEL = "gemini-2.5-flash"
-
-# Automatically resolve default project workspace folder
-DEFAULT_PROJECT_WORKSPACE = os.getenv(
-    "ANTIGRAVITY_WORKSPACE",
-    "F:\\Personal" if os.path.exists("F:\\Personal") else None,
-)
 
 DEFAULT_EXCLUDED_FOLDERS = [
     "node_modules",
@@ -55,6 +50,74 @@ DEFAULT_CLOUD_SYSTEM_INSTRUCTIONS = (
 )
 
 
+def get_configured_workspaces(project_dir: Optional[str] = None) -> list[str]:
+    """Discovers all workspace directories defined via ANTIGRAVITY_WORKSPACE(S).
+
+    Parses:
+    - Environment variables: ANTIGRAVITY_WORKSPACE, ANTIGRAVITY_WORKSPACES
+    - Configuration files: .env, .env.local, .env.example (multiple lines & comma/semicolon-separated)
+    - Local candidates (e.g. F:\\Personal, F:\\Code)
+
+    Returns:
+        List of distinct workspace paths.
+    """
+    discovered: list[str] = []
+    seen: set[str] = set()
+
+    def add_path(p: str):
+        cleaned = p.strip().strip("'\"").rstrip("/\\")
+        if cleaned:
+            normalized = os.path.normpath(cleaned)
+            if normalized.lower() not in seen:
+                seen.add(normalized.lower())
+                discovered.append(normalized)
+
+    # 1. Environment variables
+    for env_var in ["ANTIGRAVITY_WORKSPACE", "ANTIGRAVITY_WORKSPACES"]:
+        val = os.getenv(env_var)
+        if val:
+            for part in re.split(r"[,;]+", val):
+                add_path(part)
+
+    # 2. Check .env and .env.example files
+    base_dirs = [
+        project_dir,
+        os.getcwd(),
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    ]
+    for bdir in base_dirs:
+        if not bdir:
+            continue
+        for fname in [".env", ".env.local", ".env.example"]:
+            fpath = os.path.join(bdir, fname)
+            if os.path.isfile(fpath):
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith("#") or not line:
+                                continue
+                            m = re.match(r"^ANTIGRAVITY_WORKSPACE(?:S)?\s*=\s*(.+)$", line, re.IGNORECASE)
+                            if m:
+                                raw_val = m.group(1).strip()
+                                for part in re.split(r"[,;]+", raw_val):
+                                    add_path(part)
+                except Exception:
+                    pass
+
+    # 3. Add default candidates if present on disk
+    for default_candidate in ["F:\\Personal", "F:\\Code"]:
+        if os.path.isdir(default_candidate):
+            add_path(default_candidate)
+
+    return discovered
+
+
+# Automatically resolve default project workspace folder
+_ALL_DISCOVERED = get_configured_workspaces()
+DEFAULT_PROJECT_WORKSPACE = _ALL_DISCOVERED[0] if _ALL_DISCOVERED else None
+
+
 def resolve_workspaces(
     workspaces: Optional[list[str] | str] = None,
     enabled: bool = True,
@@ -71,7 +134,6 @@ def resolve_workspaces(
     if not enabled:
         return None
 
-    # Empty string or empty list means user explicitly cleared/excluded workspace
     if workspaces == "" or workspaces == []:
         return None
 
@@ -82,7 +144,12 @@ def resolve_workspaces(
         workspaces = [trimmed]
 
     if workspaces:
-        valid_dirs = [os.path.abspath(p) for p in workspaces if os.path.isdir(p)]
+        valid_dirs: list[str] = []
+        for p in workspaces:
+            if isinstance(p, str) and p.strip() and os.path.isdir(p.strip()):
+                norm = os.path.abspath(p.strip())
+                if norm not in valid_dirs:
+                    valid_dirs.append(norm)
         return valid_dirs if valid_dirs else None
 
     # Only fall back to DEFAULT_PROJECT_WORKSPACE when workspaces is strictly None (unspecified)
@@ -106,7 +173,6 @@ def get_local_agent_config(
     instructions = system_instructions or DEFAULT_LOCAL_SYSTEM_INSTRUCTIONS
     active_workspaces = resolve_workspaces(workspaces, enabled=include_workspace)
 
-    # Append folder exclusions to instructions so the agent avoids heavy subdirectories
     exclusions = exclude_folders if exclude_folders is not None else DEFAULT_EXCLUDED_FOLDERS
     if active_workspaces and exclusions:
         instructions += f"\nStrictly ignore and do not traverse or read files within these excluded directories: {', '.join(exclusions)}."

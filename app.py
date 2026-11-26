@@ -2,6 +2,7 @@
 
 Provides an interactive chat interface supporting:
 - Local LLM inference (Ollama via LocalOpenAIAgentConfig with .lightweight())
+- Multi-workspace selection from ANTIGRAVITY_WORKSPACE environment / config
 - Include/Exclude workspace folder toggle and subfolder exclusion controls
 - One-click Local Ollama Server startup and health checks
 - Hybrid task routing (local coding vs cloud strategic planning)
@@ -29,6 +30,7 @@ from config.agent_config import (
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_MODEL,
     DEFAULT_PROJECT_WORKSPACE,
+    get_configured_workspaces,
     resolve_workspaces,
 )
 from router.hybrid_router import HybridAgentRouter, TaskComplexity
@@ -80,33 +82,72 @@ def launch_ollama_server() -> bool:
 # --- Sidebar: Configuration & Health ---
 with st.sidebar:
     st.title("⚙️ Agent Settings")
-    st.markdown("Configure local inference, workspace inclusion/exclusion, and cloud escalation.")
+    st.markdown("Configure local inference, workspace selection, and cloud escalation.")
 
     st.subheader("📂 Project Workspace Folder")
     include_workspace = st.toggle(
         "Include Local Workspace",
         value=True,
-        help="Toggle ON to attach a local project folder for the agent to inspect/edit. Toggle OFF to run in standalone mode.",
+        help="Toggle ON to attach project folders for the agent to inspect/edit. Toggle OFF to run in standalone mode.",
     )
 
-    resolved_workspaces = None
+    resolved_workspaces: list[str] | None = None
     selected_exclusions = DEFAULT_EXCLUDED_FOLDERS
 
     if include_workspace:
-        default_dir = DEFAULT_PROJECT_WORKSPACE or "F:\\Personal"
-        workspace_input = st.text_input(
-            "Project Directory Path",
-            value=default_dir if os.path.isdir(default_dir) else "",
-            placeholder="e.g. F:\\Personal",
-            help="Path to the local project folder. Leave empty or toggle off to exclude.",
+        # Discover all workspaces defined in ANTIGRAVITY_WORKSPACE lines / .env
+        configured_workspaces = get_configured_workspaces()
+        if not configured_workspaces:
+            configured_workspaces = ["F:\\Personal"]
+
+        # Option to select single vs multiple workspaces
+        attach_multiple = st.checkbox(
+            "Attach Multiple Workspaces",
+            value=False,
+            help="Enable to select more than one workspace folder simultaneously.",
         )
-        resolved_workspaces = resolve_workspaces(workspace_input, enabled=True)
-        if resolved_workspaces:
-            st.success(f"✅ Included Workspace: `{resolved_workspaces[0]}`")
-        elif workspace_input.strip():
-            st.warning(f"⚠️ Directory not found: `{workspace_input}`")
+
+        if attach_multiple:
+            selected_list = st.multiselect(
+                "Select Workspaces to Include",
+                options=configured_workspaces,
+                default=[configured_workspaces[0]] if configured_workspaces else [],
+                help="Choose from workspaces configured via ANTIGRAVITY_WORKSPACE.",
+            )
+            custom_extra = st.text_input(
+                "Additional Custom Path (Optional)",
+                value="",
+                placeholder="e.g. F:\\AnotherProject",
+            )
+            candidates = list(selected_list)
+            if custom_extra.strip():
+                candidates.append(custom_extra.strip())
+            resolved_workspaces = resolve_workspaces(candidates, enabled=True)
         else:
-            st.info("ℹ️ Workspace path is empty. No folder attached.")
+            options = configured_workspaces + ["Custom Path..."]
+            chosen = st.selectbox(
+                "Select Workspace (from ANTIGRAVITY_WORKSPACE)",
+                options=options,
+                index=0,
+                help="Select from directories defined in your ANTIGRAVITY_WORKSPACE settings.",
+            )
+
+            if chosen == "Custom Path...":
+                custom_input = st.text_input(
+                    "Enter Custom Directory Path",
+                    value="",
+                    placeholder="e.g. F:\\Projects\\MyCode",
+                )
+                resolved_workspaces = resolve_workspaces(custom_input, enabled=True)
+            else:
+                resolved_workspaces = resolve_workspaces(chosen, enabled=True)
+
+        # Show status badges for resolved workspaces
+        if resolved_workspaces:
+            for ws in resolved_workspaces:
+                st.success(f"✅ Included: `{ws}`")
+        else:
+            st.info("ℹ️ No active workspace selected or directory not found.")
 
         all_exclude_options = [
             "node_modules",
@@ -223,7 +264,10 @@ with col3:
     st.metric("Routing Mode", mode_label)
 with col4:
     if include_workspace and resolved_workspaces:
-        ws_display = os.path.basename(resolved_workspaces[0])
+        if len(resolved_workspaces) == 1:
+            ws_display = os.path.basename(resolved_workspaces[0])
+        else:
+            ws_display = f"{len(resolved_workspaces)} Workspaces"
     elif include_workspace:
         ws_display = "None (Empty)"
     else:
