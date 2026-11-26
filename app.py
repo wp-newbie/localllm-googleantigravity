@@ -2,9 +2,10 @@
 
 Provides an interactive chat interface supporting:
 - Local LLM inference (Ollama via LocalOpenAIAgentConfig with .lightweight())
+- One-click Local Ollama Server startup and health checks
 - Workspace folder inclusion (e.g. F:\\Personal) for agent tools
 - Hybrid task routing (local coding vs cloud strategic planning)
-- Real-time streaming responses
+- Real-time streaming responses with graceful connection recovery
 - Live endpoint health monitoring and model discovery
 """
 
@@ -12,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 import sys
+import time
 from typing import AsyncGenerator, Iterator
 
 import streamlit as st
@@ -28,6 +31,10 @@ from config.agent_config import (
     resolve_workspaces,
 )
 from router.hybrid_router import HybridAgentRouter, TaskComplexity
+
+OLLAMA_EXE_PATH = (
+    r"C:\Users\tobsk\AppData\Local\Microsoft\WinGet\Packages\Ollama.Ollama.Portable_Microsoft.Winget.Source_8wekyb3d8bbwe\ollama.exe"
+)
 
 st.set_page_config(
     page_title="Antigravity Local LLM & Hybrid Agent",
@@ -48,6 +55,25 @@ def sync_stream(async_gen: AsyncGenerator[str, None]) -> Iterator[str]:
                 break
     finally:
         loop.close()
+
+
+def launch_ollama_server() -> bool:
+    """Launches local Ollama server in a detached background process."""
+    if os.path.exists(OLLAMA_EXE_PATH):
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        CREATE_NO_WINDOW = 0x08000000
+        try:
+            subprocess.Popen(
+                [OLLAMA_EXE_PATH, "serve"],
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+                close_fds=True,
+            )
+            return True
+        except Exception as err:
+            st.error(f"Failed to start Ollama: {err}")
+            return False
+    return False
 
 
 # --- Sidebar: Configuration & Health ---
@@ -76,19 +102,29 @@ with st.sidebar:
         help="OpenAI-compatible endpoint for Ollama or LM Studio (e.g. http://localhost:11434/v1).",
     )
 
-    # Health check button
     router_probe = HybridAgentRouter(local_base_url=base_url)
+    is_healthy, health_msg = router_probe.check_endpoint_health(timeout=1.5)
+
+    if not is_healthy:
+        st.error("⚠️ Local Ollama server is offline.")
+        if st.button("🚀 Start Local Ollama Server", use_container_width=True):
+            with st.spinner("Starting Ollama background process..."):
+                if launch_ollama_server():
+                    time.sleep(3)
+                    st.rerun()
+                else:
+                    st.warning("Ollama executable not found. Run `ollama serve` in PowerShell.")
+    else:
+        st.success("🟢 Local Ollama server is running and responsive!")
+
     if st.button("🔍 Check Endpoint Health", use_container_width=True):
-        is_healthy, msg = router_probe.check_endpoint_health()
-        if is_healthy:
+        is_h, msg = router_probe.check_endpoint_health()
+        if is_h:
             st.success(f"Connected! {msg}")
         else:
             st.error(f"Offline: {msg}")
 
-    # Discover models
-    is_healthy, health_msg = router_probe.check_endpoint_health(timeout=1.5)
     default_models = ["qwen2.5-coder:7b", "gemma4:latest", "qwen2.5-coder:0.5b"]
-
     local_model = st.selectbox(
         "Local Model Target",
         options=default_models,
@@ -140,7 +176,7 @@ st.caption(
 # Status bar metrics
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("Local Endpoint", "Online" if is_healthy else "Offline", delta=None)
+    st.metric("Local Endpoint", "Online" if is_healthy else "Offline")
 with col2:
     st.metric("Local Model", local_model)
 with col3:
@@ -197,19 +233,16 @@ user_input = st.chat_input("Enter your instruction, coding task, or architecture
 prompt = user_input or quick_prompt
 
 if prompt:
-    # Append and display user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Determine forced mode if not hybrid
     force_mode = None
     if "Local" in mode_selection:
         force_mode = "local"
     elif "Cloud" in mode_selection:
         force_mode = "cloud"
 
-    # Instantiate router with resolved workspaces
     router = HybridAgentRouter(
         local_model=local_model,
         local_base_url=base_url,
@@ -219,7 +252,6 @@ if prompt:
         auto_fallback=auto_fallback,
     )
 
-    # Classify decision for user visibility
     if force_mode:
         target_name = force_mode.upper()
         reason = f"Forced {force_mode} mode by user selection."
@@ -228,19 +260,35 @@ if prompt:
         target_name = decision.target.upper()
         reason = decision.reason
 
-    # Stream assistant response
     with st.chat_message("assistant"):
         badge_color = "green" if target_name == "LOCAL" else "blue"
         st.caption(f":{badge_color}[Routing Decision: {target_name}] — {reason}")
 
-        stream_gen = router.execute(prompt, force_mode=force_mode)
-        full_response = st.write_stream(sync_stream(stream_gen))
+        try:
+            stream_gen = router.execute(prompt, force_mode=force_mode)
+            full_response = st.write_stream(sync_stream(stream_gen))
 
-    # Save to history
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": full_response,
-            "metadata": {"target": target_name, "reason": reason},
-        }
-    )
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": full_response,
+                    "metadata": {"target": target_name, "reason": reason},
+                }
+            )
+        except ConnectionError as ce:
+            error_msg = (
+                f"⚠️ **Could not connect to local server at `{base_url}`.**\n\n"
+                f"- **Quick Fix**: Click the **'🚀 Start Local Ollama Server'** button in the sidebar.\n"
+                f"- **Alternative**: Open PowerShell and run `ollama serve`.\n"
+                f"- **Or**: Switch the routing mode in the sidebar to **⚡ Hybrid** or **☁️ Cloud Only**."
+            )
+            st.error(error_msg)
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": error_msg,
+                    "metadata": {"target": "ERROR", "reason": str(ce)},
+                }
+            )
+        except Exception as e:
+            st.error(f"Execution Error: {e}")
