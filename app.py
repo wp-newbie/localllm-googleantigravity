@@ -2,8 +2,8 @@
 
 Provides an interactive chat interface supporting:
 - Local LLM inference (Ollama via LocalOpenAIAgentConfig with .lightweight())
+- Include/Exclude workspace folder toggle and subfolder exclusion controls
 - One-click Local Ollama Server startup and health checks
-- Workspace folder inclusion (e.g. F:\\Personal) for agent tools
 - Hybrid task routing (local coding vs cloud strategic planning)
 - Real-time streaming responses with graceful connection recovery
 - Live endpoint health monitoring and model discovery
@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config.agent_config import (
     DEFAULT_CLOUD_MODEL,
+    DEFAULT_EXCLUDED_FOLDERS,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_MODEL,
     DEFAULT_PROJECT_WORKSPACE,
@@ -79,19 +80,53 @@ def launch_ollama_server() -> bool:
 # --- Sidebar: Configuration & Health ---
 with st.sidebar:
     st.title("⚙️ Agent Settings")
-    st.markdown("Configure local inference, project workspace, and cloud escalation.")
+    st.markdown("Configure local inference, workspace inclusion/exclusion, and cloud escalation.")
 
     st.subheader("📂 Project Workspace Folder")
-    workspace_input = st.text_input(
-        "Local Project Directory",
-        value=DEFAULT_PROJECT_WORKSPACE or "F:\\Personal",
-        help="Local codebase directory for the agent to inspect, read, and write (e.g. F:\\Personal).",
+    include_workspace = st.toggle(
+        "Include Local Workspace",
+        value=True,
+        help="Toggle ON to attach a local project folder for the agent to inspect/edit. Toggle OFF to run in standalone mode.",
     )
-    resolved_workspaces = resolve_workspaces(workspace_input)
-    if resolved_workspaces:
-        st.success(f"✅ Included Workspace: `{resolved_workspaces[0]}`")
-    elif workspace_input:
-        st.warning(f"⚠️ Directory not found: `{workspace_input}`")
+
+    resolved_workspaces = None
+    selected_exclusions = DEFAULT_EXCLUDED_FOLDERS
+
+    if include_workspace:
+        default_dir = DEFAULT_PROJECT_WORKSPACE or "F:\\Personal"
+        workspace_input = st.text_input(
+            "Project Directory Path",
+            value=default_dir if os.path.isdir(default_dir) else "",
+            placeholder="e.g. F:\\Personal",
+            help="Path to the local project folder. Leave empty or toggle off to exclude.",
+        )
+        resolved_workspaces = resolve_workspaces(workspace_input, enabled=True)
+        if resolved_workspaces:
+            st.success(f"✅ Included Workspace: `{resolved_workspaces[0]}`")
+        elif workspace_input.strip():
+            st.warning(f"⚠️ Directory not found: `{workspace_input}`")
+        else:
+            st.info("ℹ️ Workspace path is empty. No folder attached.")
+
+        all_exclude_options = [
+            "node_modules",
+            "dist",
+            "release",
+            ".git",
+            ".venv",
+            "build",
+            "__pycache__",
+            "coverage",
+            "temp",
+        ]
+        selected_exclusions = st.multiselect(
+            "Exclude Subfolders (Ignored)",
+            options=all_exclude_options,
+            default=[x for x in DEFAULT_EXCLUDED_FOLDERS if x in all_exclude_options],
+            help="Subdirectories the agent will strictly ignore to avoid wasting context tokens.",
+        )
+    else:
+        st.info("🚫 **Workspace Excluded**: Agent runs in standalone sandbox mode without access to local project files.")
 
     st.divider()
 
@@ -187,7 +222,12 @@ with col3:
     )
     st.metric("Routing Mode", mode_label)
 with col4:
-    ws_display = os.path.basename(resolved_workspaces[0]) if resolved_workspaces else "None"
+    if include_workspace and resolved_workspaces:
+        ws_display = os.path.basename(resolved_workspaces[0])
+    elif include_workspace:
+        ws_display = "None (Empty)"
+    else:
+        ws_display = "Excluded"
     st.metric("Workspace", ws_display)
 
 # Initialize session state for messages
@@ -248,6 +288,8 @@ if prompt:
         local_base_url=base_url,
         cloud_model=cloud_model,
         workspaces=resolved_workspaces,
+        include_workspace=include_workspace,
+        exclude_folders=selected_exclusions,
         enable_lightweight=lightweight,
         auto_fallback=auto_fallback,
     )

@@ -1,7 +1,7 @@
 """CLI test and demonstration script for Antigravity Local LLM integration.
 
 Validates local endpoint health, executes queries through LocalOpenAIAgentConfig,
-and demonstrates hybrid routing and fallback capabilities with workspace folder support.
+and demonstrates hybrid routing and fallback capabilities with workspace folder include/exclude support.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import time
 
 from config.agent_config import (
     DEFAULT_CLOUD_MODEL,
+    DEFAULT_EXCLUDED_FOLDERS,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_MODEL,
     DEFAULT_PROJECT_WORKSPACE,
@@ -62,6 +63,8 @@ async def run_chat(
     base_url: str,
     cloud_model: str,
     workspaces: list[str] | None,
+    include_workspace: bool,
+    exclude_folders: list[str] | None,
     lightweight: bool,
     auto_fallback: bool,
 ):
@@ -71,14 +74,18 @@ async def run_chat(
         local_base_url=base_url,
         cloud_model=cloud_model,
         workspaces=workspaces,
+        include_workspace=include_workspace,
+        exclude_folders=exclude_folders,
         enable_lightweight=lightweight,
         auto_fallback=auto_fallback,
     )
 
+    ws_status = router.workspaces if (include_workspace and router.workspaces) else "None (Excluded)"
     print(f"\n--- Running Execution ---")
     print(f"Mode          : {mode.upper()}")
     print(f"Local Model   : {model} (Endpoint: {base_url})")
-    print(f"Workspaces    : {router.workspaces or 'Default'}")
+    print(f"Workspaces    : {ws_status}")
+    print(f"Excluded Dirs : {router.exclude_folders if include_workspace else 'N/A'}")
     print(f"Lightweight   : {lightweight}")
     print(f"Cloud Fallback: {cloud_model} (Enabled: {auto_fallback})")
     print(f"Prompt        : {prompt}")
@@ -143,6 +150,17 @@ def main():
         help=f"Local project folder to include in the agent's workspace (default: {DEFAULT_PROJECT_WORKSPACE}).",
     )
     parser.add_argument(
+        "--no-workspace",
+        action="store_true",
+        help="Explicitly exclude and detach local project workspace.",
+    )
+    parser.add_argument(
+        "--exclude-folders",
+        type=str,
+        default=None,
+        help="Comma-separated list of folder names to strictly ignore (e.g. 'node_modules,dist,.git').",
+    )
+    parser.add_argument(
         "--no-lightweight",
         action="store_true",
         help="Disable .lightweight() optimization on LocalOpenAIAgentConfig.",
@@ -160,7 +178,12 @@ def main():
         success = check_endpoint(args.base_url)
         sys.exit(0 if success else 1)
 
-    workspaces = resolve_workspaces(args.workspace)
+    include_workspace = not args.no_workspace
+    workspaces = resolve_workspaces(args.workspace, enabled=include_workspace)
+
+    exclude_list = None
+    if args.exclude_folders:
+        exclude_list = [x.strip() for x in args.exclude_folders.split(",") if x.strip()]
 
     asyncio.run(
         run_chat(
@@ -170,6 +193,8 @@ def main():
             base_url=args.base_url,
             cloud_model=args.cloud_model,
             workspaces=workspaces,
+            include_workspace=include_workspace,
+            exclude_folders=exclude_list,
             lightweight=not args.no_lightweight,
             auto_fallback=not args.no_fallback,
         )

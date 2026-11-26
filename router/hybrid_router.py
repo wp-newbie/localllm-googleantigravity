@@ -19,6 +19,7 @@ import requests
 from google.antigravity import Agent
 from config.agent_config import (
     DEFAULT_CLOUD_MODEL,
+    DEFAULT_EXCLUDED_FOLDERS,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_MODEL,
     DEFAULT_PROJECT_WORKSPACE,
@@ -65,13 +66,17 @@ class HybridAgentRouter:
         local_base_url: str = DEFAULT_LOCAL_BASE_URL,
         cloud_model: str = DEFAULT_CLOUD_MODEL,
         workspaces: Optional[list[str] | str] = None,
+        include_workspace: bool = True,
+        exclude_folders: Optional[list[str]] = None,
         enable_lightweight: bool = True,
         auto_fallback: bool = True,
     ):
         self.local_model = local_model
         self.local_base_url = local_base_url.rstrip("/")
         self.cloud_model = cloud_model
-        self.workspaces = resolve_workspaces(workspaces)
+        self.include_workspace = include_workspace
+        self.workspaces = resolve_workspaces(workspaces, enabled=include_workspace)
+        self.exclude_folders = exclude_folders if exclude_folders is not None else DEFAULT_EXCLUDED_FOLDERS
         self.enable_lightweight = enable_lightweight
         self.auto_fallback = auto_fallback
         self._planning_pattern = re.compile("|".join(self.PLANNING_KEYWORDS), re.IGNORECASE)
@@ -129,10 +134,11 @@ class HybridAgentRouter:
             decision = self.classify_task(prompt)
 
         logger.info(
-            "Routing decision: %s (%s) [Workspaces: %s]",
+            "Routing decision: %s (%s) [Workspaces: %s, Excluded: %s]",
             decision.target.upper(),
             decision.reason,
             self.workspaces,
+            self.exclude_folders,
         )
 
         if decision.target == "local":
@@ -170,6 +176,8 @@ class HybridAgentRouter:
             model=self.local_model,
             base_url=self.local_base_url,
             workspaces=self.workspaces,
+            include_workspace=self.include_workspace,
+            exclude_folders=self.exclude_folders,
             lightweight=self.enable_lightweight,
         )
         async with Agent(config) as agent:
@@ -182,6 +190,8 @@ class HybridAgentRouter:
         config = get_cloud_agent_config(
             model=self.cloud_model,
             workspaces=self.workspaces,
+            include_workspace=self.include_workspace,
+            exclude_folders=self.exclude_folders,
         )
         async with Agent(config) as agent:
             response = await agent.chat(prompt)
